@@ -54,7 +54,7 @@ class NewsToInstagramPipeline:
         
     def fetch_latest_news(self, section: str = 'home', limit: int = 10) -> List[Dict]:
         """
-        Fetch latest news articles from Webstory backend
+        Fetch latest news articles from NYT API (fresh content)
         
         Args:
             section: News section (home, politics, technology, business, etc.)
@@ -64,16 +64,35 @@ class NewsToInstagramPipeline:
             List of article dictionaries
         """
         try:
-            logger.info(f"📰 Fetching {limit} articles from section: {section}")
+            logger.info(f"📰 Fetching {limit} FRESH articles from NYT API for section: {section}")
             
-            articles = []
+            # Get NYT API key from environment
+            nyt_api_key = os.getenv('NYT_API_KEY', 'LAi7B0DrisIZ7g0xD8t5NvjqjHGUfRri')
             
-            # Try MongoDB first if available
-            if self.webstory_db is not None:
-                try:
-                    logger.info("📊 Fetching from Webstory MongoDB...")
+            # Map sections to NYT API sections
+            nyt_section_map = {
+                'home': 'home',
+                'technology': 'technology',
+                'business': 'business',
+                'politics': 'politics',
+                'sports': 'sports',
+                'entertainment': 'arts'
+            }
+            
+            nyt_section = nyt_section_map.get(section, 'home')
+            
+            # Fetch from NYT API
+            nyt_url = f"https://api.nytimes.com/svc/topstories/v2/{nyt_section}.json?api-key={nyt_api_key}"
+            
+            try:
+                logger.info(f"� Fetching from NYT API: {nyt_section}")
+                response = requests.get(nyt_url, timeout=15)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    nyt_articles = data.get('results', [])
                     
-                    # Get list of already posted article URLs from database
+                    # Get list of already posted article URLs
                     posted_urls = set()
                     try:
                         if self.db is not None and self.db.collection is not None:
@@ -86,73 +105,52 @@ class NewsToInstagramPipeline:
                     # Merge with memory cache
                     posted_urls.update(self.posted_articles)
                     
-                    query = {}
-                    if section and section != 'home':
-                        query['section'] = section
-                    
-                    # Exclude already posted URLs
-                    if len(posted_urls) > 0:
-                        query['url'] = {'$nin': list(posted_urls)}
-                    
-                    collection = self.webstory_db.articles
-                    # Fetch more than limit to ensure we have enough unique articles
-                    cursor = collection.find(query).sort('publishedDate', -1).limit(limit * 3)
-                    
-                    for doc in cursor:
+                    # Convert NYT articles to our format and filter out posted ones
+                    articles = []
+                    for nyt_article in nyt_articles:
+                        url = nyt_article.get('url', '')
+                        
+                        # Skip if already posted
+                        if url in posted_urls:
+                            continue
+                        
+                        # Convert multimedia
+                        multimedia = []
+                        if nyt_article.get('multimedia'):
+                            for media in nyt_article['multimedia']:
+                                multimedia.append({
+                                    'url': media.get('url', ''),
+                                    'format': media.get('format', 'Standard Thumbnail'),
+                                    'type': media.get('type', 'image')
+                                })
+                        
+                        article = {
+                            'title': nyt_article.get('title', ''),
+                            'abstract': nyt_article.get('abstract', ''),
+                            'url': url,
+                            'section': nyt_article.get('section', section),
+                            'source': 'New York Times',
+                            'byline': nyt_article.get('byline', ''),
+                            'published_date': nyt_article.get('published_date', ''),
+                            'multimedia': multimedia
+                        }
+                        
+                        articles.append(article)
+                        
                         if len(articles) >= limit:
                             break
-                        
-                        # Convert MongoDB document to dict and clean it
-                        article = {
-                            'title': doc.get('title', ''),
-                            'abstract': doc.get('abstract', ''),
-                            'url': doc.get('url', ''),
-                            'section': doc.get('section', section),
-                            'source': doc.get('source', 'Webstory'),
-                            'byline': doc.get('byline', ''),
-                            'publishedDate': doc.get('publishedDate', ''),
-                            'multimedia': doc.get('multimedia', [])
-                        }
-                        articles.append(article)
                     
-                    if len(articles) > 0:
-                        logger.info(f"✅ Fetched {len(articles)} NEW articles from MongoDB")
-                    else:
-                        logger.warning("⚠️ No new articles found in MongoDB")
-                        
-                except Exception as e:
-                    logger.warning(f"MongoDB fetch failed, trying API: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    articles = []
+                    logger.info(f"✅ Fetched {len(articles)} FRESH articles from NYT API")
+                    logger.info(f"📊 Found {len(articles)} new articles to process")
+                    return articles
+                else:
+                    logger.error(f"❌ NYT API returned status {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch from NYT API: {e}")
             
-            # Fallback to API endpoints if MongoDB didn't work
-            if len(articles) == 0:
-                endpoints = [
-                    f"{self.webstory_url}/articles/section/{section}?limit={limit}",
-                    f"{self.webstory_url}/articles?limit={limit}",
-                    f"http://localhost:3001/api/articles/section/{section}?limit={limit}"
-                ]
-                
-                for endpoint in endpoints:
-                    try:
-                        response = requests.get(endpoint, timeout=10)
-                        if response.status_code == 200:
-                            articles = response.json()
-                            logger.info(f"✅ Fetched {len(articles)} articles from {endpoint}")
-                            break
-                    except requests.RequestException as e:
-                        logger.warning(f"Failed to fetch from {endpoint}: {e}")
-                        continue
-            
-            if len(articles) == 0:
-                logger.error("❌ Could not fetch articles from any source")
-                return []
-            
-            # Filter out already posted articles (check both memory and database)
-            new_articles = []
-            for article in articles:
-                url = article.get('url')
+            logger.error("❌ Could not fetch articles from NYT API")
+            return []
                 if not url:
                     continue
                 
@@ -389,15 +387,35 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             return image_url
     
     def upload_image(self, image_bytes: bytes) -> Optional[str]:
-        """Upload image to imgbb or similar free host"""
+        """Upload image to imgur or imgbb (imgur first, more Instagram-compatible)"""
         try:
             import base64
             
-            # Try imgbb first
+            # Try imgur first (more Instagram-compatible)
+            logger.info(f"📤 Uploading to imgur (size: {len(image_bytes)} bytes)...")
+            headers = {'Authorization': 'Client-ID 546c25a59c58ad7'}  # Public anonymous client
+            img_b64 = base64.b64encode(image_bytes).decode()
+            
+            response = requests.post(
+                'https://api.imgur.com/3/image',
+                headers=headers,
+                data={'image': img_b64},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                url = data['data']['link']
+                logger.info(f"✅ Uploaded to imgur: {url}")
+                return url
+            else:
+                logger.warning(f"⚠️ imgur upload failed (HTTP {response.status_code}): {response.text}")
+            
+            # Fallback: Try imgbb
             api_key = Config.IMGBB_API_KEY
             
             if api_key:
-                logger.info(f"📤 Uploading image to imgbb (size: {len(image_bytes)} bytes)...")
+                logger.info(f"📤 Trying imgbb as fallback (size: {len(image_bytes)} bytes)...")
                 img_b64 = base64.b64encode(image_bytes).decode()
                 
                 response = requests.post(
@@ -412,35 +430,14 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 if response.status_code == 200:
                     data = response.json()
                     url = data['data']['url']
-                    # Get the direct image URL (not the page URL)
-                    direct_url = data['data']['image']['url'] if 'image' in data['data'] else url
-                    logger.info(f"✅ Uploaded image to imgbb: {direct_url}")
-                    return direct_url
+                    logger.info(f"✅ Uploaded to imgbb: {url}")
+                    return url
                 else:
-                    logger.warning(f"⚠️ imgbb upload failed (HTTP {response.status_code}): {response.text}")
+                    logger.error(f"❌ imgbb upload failed (HTTP {response.status_code}): {response.text}")
             else:
-                logger.warning("⚠️ IMGBB_API_KEY not configured")
+                logger.warning("⚠️ IMGBB_API_KEY not configured for fallback")
             
-            # Fallback: Try imgur (anonymous upload)
-            logger.info("📤 Trying imgur as fallback...")
-            files = {'image': image_bytes}
-            headers = {'Authorization': 'Client-ID 546c25a59c58ad7'}  # Public anonymous client
-            
-            response = requests.post(
-                'https://api.imgur.com/3/image',
-                files=files,
-                headers=headers,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                url = data['data']['link']
-                logger.info(f"✅ Uploaded image to imgur: {url}")
-                return url
-            else:
-                logger.error(f"❌ imgur upload failed: {response.text}")
-                return None
+            return None
                 
         except Exception as e:
             logger.error(f"❌ Image upload exception: {str(e)}")
