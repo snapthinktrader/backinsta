@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: instagram-auto-poster
     env: python
     region: oregon
