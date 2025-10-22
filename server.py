@@ -349,13 +349,6 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 draw.text((padding, current_y), line, font=title_font, fill=(255, 255, 255))
                 current_y += int(base_font_size * 1.15)  # Tighter line spacing
             
-            # 4. Draw branding at calculated position (not absolute bottom)
-            # 2. Draw title with better spacing between lines
-            title_lines = wrapped_title.split('\n')
-            for line in title_lines:
-                draw.text((padding, current_y), line, font=title_font, fill=(255, 255, 255))
-                current_y += int(base_font_size * 1.15)  # Tighter line spacing
-            
             # Save to BytesIO
             output = io.BytesIO()
             img.save(output, format='JPEG', quality=95)
