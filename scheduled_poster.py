@@ -11,14 +11,12 @@ import logging
 from datetime import datetime
 from dotenv import load_dotenv
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Load environment from current directory
+load_dotenv()
 
-# Load environment
-load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env'))
-
-from backinsta.server import NewsToInstagramPipeline
-from backinsta.config import Config
+# Import from same directory
+from server import NewsToInstagramPipeline
+from config import Config
 
 # Configure logging
 logging.basicConfig(
