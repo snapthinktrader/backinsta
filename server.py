@@ -151,25 +151,6 @@ class NewsToInstagramPipeline:
             
             logger.error("❌ Could not fetch articles from NYT API")
             return []
-                if not url:
-                    continue
-                
-                # Check memory cache
-                if url in self.posted_articles:
-                    continue
-                
-                # Check database (if available)
-                try:
-                    if self.db is not None and self.db.is_already_posted(url):
-                        self.posted_articles.add(url)  # Add to memory cache
-                        continue
-                except:
-                    pass  # Continue anyway if DB check fails
-                
-                new_articles.append(article)
-            
-            logger.info(f"📊 Found {len(new_articles)} new articles to process")
-            return new_articles
             
         except Exception as e:
             logger.error(f"❌ Error fetching news: {e}")
@@ -304,13 +285,21 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             
-            # Create drawing context
-            draw = ImageDraw.Draw(img)
             width, height = img.size
             
-            # Calculate overlay height (only 25-30% of image for better look)
-            # This leaves more image visible
-            overlay_height = int(height * 0.28)
+            # Convert landscape images to portrait for better text space
+            if width > height:
+                logger.info(f"🔄 Converting landscape image ({width}x{height}) to portrait...")
+                # Rotate 90 degrees counter-clockwise to make it portrait
+                img = img.rotate(90, expand=True)
+                width, height = img.size
+                logger.info(f"✅ New dimensions: {width}x{height}")
+            
+            # Create drawing context
+            draw = ImageDraw.Draw(img)
+            
+            # Calculate overlay height (35% for more space with large text)
+            overlay_height = int(height * 0.35)
             overlay_start = height - overlay_height
             
             # Add semi-transparent overlay at bottom (less opaque for better image visibility)
@@ -318,22 +307,69 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             img.paste(overlay, (0, overlay_start), overlay)
             draw = ImageDraw.Draw(img)
             
-            # Try to use a nice font, fallback to default
-            try:
-                # Larger, more readable font sizes
-                base_font_size = max(48, int(width / 15))  # Increased from width/25 to width/15
-                title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", base_font_size)
-                section_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(base_font_size * 0.7))
-            except:
-                title_font = ImageFont.load_default()
-                section_font = title_font
-            
-            # Wrap title text - shorter lines for better readability
-            max_chars = int(width / (base_font_size * 0.5))  # Adjusted for larger font
-            wrapped_title = textwrap.fill(title, width=max_chars)
-            
             # Calculate positions with centered content and proper spacing
             padding = 30  # Increased padding
+            
+            # Calculate available space for text in overlay
+            available_height = overlay_height - (2 * padding)  # Top and bottom padding
+            
+            # Start with ideal font size
+            base_font_size = max(48, int(width / 15))
+            
+            # Function to wrap text and check if it fits
+            def wrap_and_check_fit(font_size):
+                try:
+                    title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+                    section_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(font_size * 0.7))
+                except:
+                    title_font = ImageFont.load_default()
+                    section_font = title_font
+                
+                # Wrap title text using actual font measurements
+                available_width = width - (2 * padding)
+                
+                # Smart text wrapping - split into lines that fit
+                words = title.split()
+                lines = []
+                current_line = []
+                
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    bbox = draw.textbbox((0, 0), test_line, font=title_font)
+                    text_width = bbox[2] - bbox[0]
+                    
+                    if text_width <= available_width:
+                        current_line.append(word)
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                            current_line = [word]
+                        else:
+                            lines.append(word)
+                
+                if current_line:
+                    lines.append(' '.join(current_line))
+                
+                # Calculate total height needed
+                section_height = int(font_size * 0.9)  # Section tag height
+                title_height = len(lines) * int(font_size * 1.15)  # All title lines
+                total_height = section_height + title_height
+                
+                return title_font, section_font, lines, total_height
+            
+            # Try decreasing font sizes until text fits
+            for attempt_size in range(base_font_size, 24, -4):  # Decrease by 4px each time, minimum 24px
+                title_font, section_font, title_lines, total_height = wrap_and_check_fit(attempt_size)
+                
+                if total_height <= available_height:
+                    base_font_size = attempt_size
+                    logger.info(f"✅ Using font size {base_font_size}px for {len(title_lines)} lines (height: {total_height}px / {available_height}px available)")
+                    break
+            else:
+                # Use smallest size even if it doesn't fit perfectly
+                logger.warning(f"⚠️ Text may be tight, using minimum font size")
+            
+            wrapped_title = '\n'.join(title_lines)
             current_y = overlay_start + padding
             
             # 1. Draw section tag at top (smaller, elegant)
@@ -388,10 +424,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
     
     def upload_image(self, image_bytes: bytes) -> Optional[str]:
         """Upload image to imgur or imgbb (imgur first, more Instagram-compatible)"""
+        import base64
+        
+        # Try imgur first (more Instagram-compatible)
         try:
-            import base64
-            
-            # Try imgur first (more Instagram-compatible)
             logger.info(f"📤 Uploading to imgur (size: {len(image_bytes)} bytes)...")
             headers = {'Authorization': 'Client-ID 546c25a59c58ad7'}  # Public anonymous client
             img_b64 = base64.b64encode(image_bytes).decode()
@@ -410,8 +446,11 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 return url
             else:
                 logger.warning(f"⚠️ imgur upload failed (HTTP {response.status_code}): {response.text}")
+        except Exception as imgur_error:
+            logger.warning(f"⚠️ imgur upload exception: {str(imgur_error)}")
             
-            # Fallback: Try imgbb
+        # Fallback: Try imgbb
+        try:
             api_key = Config.IMGBB_API_KEY
             
             if api_key:
