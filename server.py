@@ -380,7 +380,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Note: Instagram Graph API requires publicly accessible URLs
             # We need to upload this to a CDN or image hosting service
             # For now, we'll try to upload to imgbb
-            return self.upload_image_to_host(output.getvalue())
+            uploaded_url = self.upload_image(output.getvalue())
+            return uploaded_url if uploaded_url else image_url
             
         except Exception as e:
             logger.warning(f"⚠️ Could not add text to image: {e}")
