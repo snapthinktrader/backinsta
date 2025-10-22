@@ -322,20 +322,20 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             # Try to use a nice font, fallback to default
             try:
-                # Smaller, more elegant font sizes
-                base_font_size = max(28, int(width / 25))
+                # Larger, more readable font sizes
+                base_font_size = max(48, int(width / 15))  # Increased from width/25 to width/15
                 title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", base_font_size)
-                section_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(base_font_size * 0.65))
+                section_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(base_font_size * 0.7))
             except:
                 title_font = ImageFont.load_default()
                 section_font = title_font
             
             # Wrap title text - shorter lines for better readability
-            max_chars = int(width / (base_font_size * 0.6))
+            max_chars = int(width / (base_font_size * 0.5))  # Adjusted for larger font
             wrapped_title = textwrap.fill(title, width=max_chars)
             
             # Calculate positions with centered content and proper spacing
-            padding = 25
+            padding = 30  # Increased padding
             current_y = overlay_start + padding
             
             # 1. Draw section tag at top (smaller, elegant)
