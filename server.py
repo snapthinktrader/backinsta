@@ -386,11 +386,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             logger.warning(f"⚠️ Could not add text to image: {e}")
             return image_url
     
-    def upload_image_to_host(self, image_bytes: bytes) -> Optional[str]:
+    def upload_image(self, image_bytes: bytes) -> Optional[str]:
         """Upload image to imgbb or similar free host"""
         try:
             import base64
-            from .config import Config
             
             # Use imgbb API (free tier)
             api_key = Config.IMGBB_API_KEY
