@@ -285,15 +285,45 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             
-            width, height = img.size
+            original_width, original_height = img.size
             
-            # Convert landscape images to portrait for better text space
-            if width > height:
-                logger.info(f"🔄 Converting landscape image ({width}x{height}) to portrait...")
-                # Rotate 90 degrees counter-clockwise to make it portrait
-                img = img.rotate(90, expand=True)
+            # Convert landscape images to portrait by cropping to 4:5 ratio (Instagram portrait)
+            if original_width > original_height:
+                logger.info(f"🔄 Converting landscape image ({original_width}x{original_height}) to portrait...")
+                
+                # Calculate target dimensions for 4:5 portrait ratio
+                # Keep the height, calculate new width
+                target_height = original_height
+                target_width = int(target_height * 0.8)  # 4:5 ratio
+                
+                # If calculated width is larger than original, adjust based on width
+                if target_width > original_width:
+                    target_width = original_width
+                    target_height = int(target_width * 1.25)  # 5:4 ratio
+                
+                # Crop from center
+                left = (original_width - target_width) // 2
+                top = (original_height - target_height) // 2
+                right = left + target_width
+                bottom = top + target_height
+                
+                img = img.crop((left, top, right, bottom))
+                
+                # Upscale to Instagram's recommended portrait size (1080x1350)
+                img = img.resize((1080, 1350), Image.Resampling.LANCZOS)
                 width, height = img.size
-                logger.info(f"✅ New dimensions: {width}x{height}")
+                logger.info(f"✅ Cropped and upscaled to portrait: {width}x{height}")
+            else:
+                # For portrait/square images, just ensure good resolution
+                width, height = img.size
+                if width < 1080 or height < 1350:
+                    # Upscale maintaining aspect ratio
+                    scale = max(1080/width, 1350/height)
+                    new_width = int(width * scale)
+                    new_height = int(height * scale)
+                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    width, height = img.size
+                    logger.info(f"✅ Upscaled to {width}x{height} for better quality")
             
             # Create drawing context
             draw = ImageDraw.Draw(img)
@@ -383,9 +413,9 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 draw.text((padding, current_y), line, font=title_font, fill=(255, 255, 255))
                 current_y += int(base_font_size * 1.15)  # Tighter line spacing
             
-            # Save to BytesIO
+            # Save to BytesIO with maximum quality for sharp text
             output = io.BytesIO()
-            img.save(output, format='JPEG', quality=95)
+            img.save(output, format='JPEG', quality=98, optimize=False, subsampling=0)
             output.seek(0)
             
             # Upload to a temporary storage or return as base64

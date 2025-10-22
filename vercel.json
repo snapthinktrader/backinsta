@@ -1,15 +1,15 @@
 {
   "version": 2,
-  "functions": {
-    "api/cron-post.py": {
-      "maxDuration": 60,
-      "runtime": "python3.9"
-    }
-  },
-  "crons": [
+  "builds": [
     {
-      "path": "/api/cron-post",
-      "schedule": "*/15 * * * *"
+      "src": "api/post.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/post",
+      "dest": "api/post.py"
     }
   ]
 }
