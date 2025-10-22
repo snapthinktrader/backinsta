@@ -19,6 +19,8 @@ services:
         sync: false
       - key: IMGBB_API_KEY
         sync: false
+      - key: NYT_API_KEY
+        value: LAi7B0DrisIZ7g0xD8t5NvjqjHGUfRri
       - key: WEBSTORY_MONGODB_URI
         value: mongodb+srv://ajay26:Ajtiwari26@cluster0.pfudopf.mongodb.net/webstory?retryWrites=true&w=majority&appName=Cluster0
       - key: MONGODB_URI
