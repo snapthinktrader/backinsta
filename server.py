@@ -281,6 +281,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             img = Image.open(io.BytesIO(response.content))
             
+            # Handle EXIF orientation and strip metadata
+            from PIL import ImageOps
+            img = ImageOps.exif_transpose(img)  # Auto-rotate based on EXIF
+            
             # Convert to RGB if necessary
             if img.mode != 'RGB':
                 img = img.convert('RGB')
@@ -328,25 +332,20 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Create drawing context
             draw = ImageDraw.Draw(img)
             
-            # Calculate overlay height (35% for more space with large text)
-            overlay_height = int(height * 0.35)
-            overlay_start = height - overlay_height
-            
-            # Add semi-transparent overlay at bottom (less opaque for better image visibility)
-            overlay = Image.new('RGBA', (width, overlay_height), (0, 0, 0, 180))
-            img.paste(overlay, (0, overlay_start), overlay)
-            draw = ImageDraw.Draw(img)
-            
             # Calculate positions with centered content and proper spacing
             padding = 30  # Increased padding
+            small_margin = 8  # extra margin inside overlay
+
+            # Define overlay size bounds (as fractions of image height)
+            min_overlay_ratio = 0.12  # at least 12% of image height
+            max_overlay_ratio = 0.5   # at most 50% of image height
+            min_overlay_px = int(height * min_overlay_ratio)
+            max_overlay_px = int(height * max_overlay_ratio)
+
+            # Start with a large font size for HD images but will adjust dynamically
+            base_font_size = max(90, int(width / 10))
             
-            # Calculate available space for text in overlay
-            available_height = overlay_height - (2 * padding)  # Top and bottom padding
-            
-            # Start with ideal font size
-            base_font_size = max(48, int(width / 15))
-            
-            # Function to wrap text and check if it fits
+            # Function to wrap text and return layout metrics
             def wrap_and_check_fit(font_size):
                 try:
                     title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
@@ -380,26 +379,44 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 if current_line:
                     lines.append(' '.join(current_line))
                 
-                # Calculate total height needed
+                # Calculate total height needed for overlay content (including padding)
                 section_height = int(font_size * 0.9)  # Section tag height
                 title_height = len(lines) * int(font_size * 1.15)  # All title lines
-                total_height = section_height + title_height
-                
+                content_height = section_height + title_height
+                total_height = content_height + (2 * padding) + small_margin
+
                 return title_font, section_font, lines, total_height
             
-            # Try decreasing font sizes until text fits
-            for attempt_size in range(base_font_size, 24, -4):  # Decrease by 4px each time, minimum 24px
-                title_font, section_font, title_lines, total_height = wrap_and_check_fit(attempt_size)
-                
-                if total_height <= available_height:
-                    base_font_size = attempt_size
-                    logger.info(f"✅ Using font size {base_font_size}px for {len(title_lines)} lines (height: {total_height}px / {available_height}px available)")
+            # Try decreasing font sizes until content height fits within max_overlay_px.
+            chosen_font = None
+            chosen_lines = None
+            chosen_content_height = None
+            for attempt_size in range(base_font_size, 24, -2):  # finer decrement
+                title_font, section_font, title_lines, required_total = wrap_and_check_fit(attempt_size)
+                # If required overlay height fits within maximum allowed, choose it
+                if required_total <= max_overlay_px:
+                    chosen_font = attempt_size
+                    chosen_lines = title_lines
+                    chosen_content_height = required_total
                     break
-            else:
-                # Use smallest size even if it doesn't fit perfectly
-                logger.warning(f"⚠️ Text may be tight, using minimum font size")
-            
-            wrapped_title = '\n'.join(title_lines)
+            if chosen_font is None:
+                # Even the smallest font didn't fit within max; pick the smallest and clamp later
+                chosen_font = 24
+                title_font, section_font, chosen_lines, chosen_content_height = wrap_and_check_fit(chosen_font)
+                logger.warning("⚠️ Text is long; using minimum font and allowing overlay to hit max height")
+
+            # Compute final overlay height tightly based on content, clamped between min and max
+            overlay_height = max(min_overlay_px, min(chosen_content_height, max_overlay_px))
+            overlay_start = height - overlay_height
+            logger.info(f"🔧 Computed overlay height: {overlay_height}px (content needed: {chosen_content_height}px)")
+
+            # Add semi-transparent overlay at bottom with exactly computed height
+            overlay = Image.new('RGBA', (width, overlay_height), (0, 0, 0, 180))
+            img.paste(overlay, (0, overlay_start), overlay)
+            draw = ImageDraw.Draw(img)
+
+            # Now prepare wrapped title and starting y position
+            wrapped_title = '\n'.join(chosen_lines)
             current_y = overlay_start + padding
             
             # 1. Draw section tag at top (smaller, elegant)
@@ -415,7 +432,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             # Save to BytesIO with maximum quality for sharp text
             output = io.BytesIO()
-            img.save(output, format='JPEG', quality=98, optimize=False, subsampling=0)
+            # Strip EXIF and save with MAXIMUM quality (100 for sharpest text)
+            img.save(output, format='JPEG', quality=100, optimize=False, subsampling=0, exif=b'')
             output.seek(0)
             
             # Upload to a temporary storage or return as base64
