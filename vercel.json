@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/cron-post.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "functions": {
+    "api/cron-post.py": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron-post",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
