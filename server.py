@@ -393,32 +393,53 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         try:
             import base64
             
-            # Use imgbb API (free tier)
+            # Try imgbb first
             api_key = Config.IMGBB_API_KEY
             
-            if not api_key:
-                logger.error("❌ IMGBB_API_KEY not configured in environment variables!")
-                return None
+            if api_key:
+                logger.info(f"📤 Uploading image to imgbb (size: {len(image_bytes)} bytes)...")
+                img_b64 = base64.b64encode(image_bytes).decode()
+                
+                response = requests.post(
+                    'https://api.imgbb.com/1/upload',
+                    data={
+                        'key': api_key,
+                        'image': img_b64
+                    },
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    url = data['data']['url']
+                    # Get the direct image URL (not the page URL)
+                    direct_url = data['data']['image']['url'] if 'image' in data['data'] else url
+                    logger.info(f"✅ Uploaded image to imgbb: {direct_url}")
+                    return direct_url
+                else:
+                    logger.warning(f"⚠️ imgbb upload failed (HTTP {response.status_code}): {response.text}")
+            else:
+                logger.warning("⚠️ IMGBB_API_KEY not configured")
             
-            logger.info(f"📤 Uploading image to imgbb (size: {len(image_bytes)} bytes)...")
-            img_b64 = base64.b64encode(image_bytes).decode()
+            # Fallback: Try imgur (anonymous upload)
+            logger.info("📤 Trying imgur as fallback...")
+            files = {'image': image_bytes}
+            headers = {'Authorization': 'Client-ID 546c25a59c58ad7'}  # Public anonymous client
             
             response = requests.post(
-                'https://api.imgbb.com/1/upload',
-                data={
-                    'key': api_key,
-                    'image': img_b64
-                },
+                'https://api.imgur.com/3/image',
+                files=files,
+                headers=headers,
                 timeout=30
             )
             
             if response.status_code == 200:
                 data = response.json()
-                url = data['data']['url']
-                logger.info(f"✅ Uploaded image to imgbb: {url}")
+                url = data['data']['link']
+                logger.info(f"✅ Uploaded image to imgur: {url}")
                 return url
             else:
-                logger.error(f"❌ imgbb upload failed (HTTP {response.status_code}): {response.text}")
+                logger.error(f"❌ imgur upload failed: {response.text}")
                 return None
                 
         except Exception as e:
