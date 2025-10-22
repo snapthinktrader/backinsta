@@ -374,10 +374,18 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # We need to upload this to a CDN or image hosting service
             # For now, we'll try to upload to imgbb
             uploaded_url = self.upload_image(output.getvalue())
-            return uploaded_url if uploaded_url else image_url
+            
+            if uploaded_url:
+                logger.info(f"✅ Text overlay image uploaded successfully: {uploaded_url}")
+                return uploaded_url
+            else:
+                logger.warning("⚠️ Failed to upload overlay image, using original image instead")
+                return image_url
             
         except Exception as e:
-            logger.warning(f"⚠️ Could not add text to image: {e}")
+            logger.error(f"❌ Could not add text to image: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return image_url
     
     def upload_image(self, image_bytes: bytes) -> Optional[str]:
@@ -389,9 +397,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             api_key = Config.IMGBB_API_KEY
             
             if not api_key:
-                logger.warning("⚠️ IMGBB_API_KEY not configured, skipping image upload")
+                logger.error("❌ IMGBB_API_KEY not configured in environment variables!")
                 return None
             
+            logger.info(f"📤 Uploading image to imgbb (size: {len(image_bytes)} bytes)...")
             img_b64 = base64.b64encode(image_bytes).decode()
             
             response = requests.post(
@@ -409,11 +418,13 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 logger.info(f"✅ Uploaded image to imgbb: {url}")
                 return url
             else:
-                logger.warning(f"⚠️ Failed to upload to imgbb: {response.text}")
+                logger.error(f"❌ imgbb upload failed (HTTP {response.status_code}): {response.text}")
                 return None
                 
         except Exception as e:
-            logger.warning(f"⚠️ Image upload failed: {e}")
+            logger.error(f"❌ Image upload exception: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
     
     def get_article_image_url(self, article: Dict) -> Optional[str]:
@@ -517,6 +528,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             creation_id = create_response.json().get('id')
             logger.info(f"✅ Media object created: {creation_id}")
+            
+            # Wait for Instagram to process the image (especially important for hosted images)
+            logger.info("⏳ Waiting 5 seconds for Instagram to process the image...")
+            time.sleep(5)
             
             # Step 2: Publish media
             publish_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media_publish"
