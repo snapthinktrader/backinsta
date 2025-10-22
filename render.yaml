@@ -1,0 +1,25 @@
+services:
+  - type: worker
+    name: instagram-auto-poster
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scheduled_poster.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: POST_INTERVAL_MINUTES
+        value: 15
+      - key: REACT_APP_ACCESS_TOKEN
+        sync: false
+      - key: REACT_APP_INSTAGRAM_BUSINESS_ACCOUNT_ID
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: IMGBB_API_KEY
+        sync: false
+      - key: WEBSTORY_MONGODB_URI
+        value: mongodb+srv://ajay26:Ajtiwari26@cluster0.pfudopf.mongodb.net/webstory?retryWrites=true&w=majority&appName=Cluster0
+      - key: MONGODB_URI
+        value: mongodb+srv://aj:aj@qpost.lk5htbl.mongodb.net/?retryWrites=true&w=majority&appName=qpost
