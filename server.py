@@ -345,14 +345,44 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Start with a large font size for HD images but will adjust dynamically
             base_font_size = max(90, int(width / 10))
             
+            # Function to get cross-platform font
+            def get_font(size):
+                """Try to load a good quality font across different platforms"""
+                font_paths = [
+                    # macOS
+                    "/System/Library/Fonts/Helvetica.ttc",
+                    "/System/Library/Fonts/SFNSDisplay.ttf",
+                    # Linux (Ubuntu/Debian)
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                    # Alternative Linux paths
+                    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+                    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+                ]
+                
+                for font_path in font_paths:
+                    try:
+                        font = ImageFont.truetype(font_path, size)
+                        logger.info(f"✅ Using font: {font_path} (size: {size}px)")
+                        return font
+                    except:
+                        continue
+                
+                # Fallback to default font with size
+                logger.warning(f"⚠️ No TrueType font found, using default font")
+                try:
+                    # Try to use default with size parameter (Pillow 10+)
+                    return ImageFont.load_default(size=size)
+                except:
+                    # Older Pillow versions
+                    return ImageFont.load_default()
+            
             # Function to wrap text and return layout metrics
             def wrap_and_check_fit(font_size):
-                try:
-                    title_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
-                    section_font = ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", int(font_size * 0.7))
-                except:
-                    title_font = ImageFont.load_default()
-                    section_font = title_font
+                title_font = get_font(font_size)
+                section_font = get_font(int(font_size * 0.7))
                 
                 # Wrap title text using actual font measurements
                 available_width = width - (2 * padding)
@@ -413,6 +443,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             overlay_start = height - overlay_height
             logger.info(f"🔧 Font size: {chosen_font}px for {len(chosen_lines)} lines")
             logger.info(f"🔧 Computed overlay height: {overlay_height}px (content needed: {chosen_content_height}px)")
+
+            # Load final fonts for rendering
+            title_font = get_font(chosen_font)
+            section_font = get_font(int(chosen_font * 0.7))
 
             # Add semi-transparent overlay at bottom with exactly computed height
             overlay = Image.new('RGBA', (width, overlay_height), (0, 0, 0, 180))
