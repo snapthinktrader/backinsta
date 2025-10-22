@@ -48,8 +48,8 @@ case $choice in
         python test.py
         ;;
     2)
-        echo "🚀 Starting BackInsta server..."
-        python server.py
+        echo "🚀 Starting BackInsta scheduler..."
+        python scheduled_poster.py
         ;;
     3)
         echo "👋 Goodbye!"
