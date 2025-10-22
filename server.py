@@ -338,12 +338,12 @@ Provide ONLY the analysis, no extra labels or formatting:"""
 
             # Define overlay size bounds (as fractions of image height)
             min_overlay_ratio = 0.12  # at least 12% of image height
-            max_overlay_ratio = 0.5   # at most 50% of image height
+            max_overlay_ratio = 0.25  # at most 25% of image height (reduced to show more image)
             min_overlay_px = int(height * min_overlay_ratio)
             max_overlay_px = int(height * max_overlay_ratio)
 
-            # Start with a large font size for HD images but will adjust dynamically
-            base_font_size = max(90, int(width / 10))
+            # Start with a smaller font size for compact overlay
+            base_font_size = max(60, int(width / 15))  # Reduced from width/10 to width/15
             
             # Function to get cross-platform font
             def get_font(size):
@@ -418,8 +418,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 return title_font, section_font, lines, total_height
             
             # Try decreasing font sizes until content height fits within max_overlay_px.
-            # BUT enforce a minimum readable font size of 70px
-            MIN_READABLE_FONT = 70
+            # Enforce a minimum readable font size (reduced for 25% overlay)
+            MIN_READABLE_FONT = 45  # Reduced from 70px to fit in 25% overlay
             chosen_font = None
             chosen_lines = None
             chosen_content_height = None

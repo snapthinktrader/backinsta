@@ -1,29 +1,44 @@
 #!/usr/bin/env python3
 """
-Scheduled Instagram Poster
-Posts news articles to Instagram every 15 minutes
+Scheduled poster for BackInsta - Posts articles at regular intervals
 """
 
 import os
 import sys
 import time
-import logging
+import signal
 from datetime import datetime
+import logging
 from dotenv import load_dotenv
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# Load environment from current directory
-load_dotenv()
-
-# Import from same directory
+# Import from same directory (not as package)
 from server import NewsToInstagramPipeline
 from config import Config
 
-# Configure logging
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Simple health check handler for Render
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/health' or self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'OK - Instagram Auto-Poster Running')
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Suppress HTTP logs to keep output clean
+        pass
 
 def post_article():
     """Post a single article to Instagram"""
@@ -79,6 +94,13 @@ def main():
     
     print("=" * 70)
     print()
+    
+    # Start health check server in background (for Render web service)
+    port = int(os.getenv('PORT', '10000'))
+    health_server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    health_thread = Thread(target=health_server.serve_forever, daemon=True)
+    health_thread.start()
+    logger.info(f"🏥 Health check server started on port {port}")
     
     # Validate config
     errors = Config.validate()
