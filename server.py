@@ -388,10 +388,12 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 return title_font, section_font, lines, total_height
             
             # Try decreasing font sizes until content height fits within max_overlay_px.
+            # BUT enforce a minimum readable font size of 70px
+            MIN_READABLE_FONT = 70
             chosen_font = None
             chosen_lines = None
             chosen_content_height = None
-            for attempt_size in range(base_font_size, 24, -2):  # finer decrement
+            for attempt_size in range(base_font_size, MIN_READABLE_FONT - 1, -2):  # Stop at min readable
                 title_font, section_font, title_lines, required_total = wrap_and_check_fit(attempt_size)
                 # If required overlay height fits within maximum allowed, choose it
                 if required_total <= max_overlay_px:
@@ -400,14 +402,16 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     chosen_content_height = required_total
                     break
             if chosen_font is None:
-                # Even the smallest font didn't fit within max; pick the smallest and clamp later
-                chosen_font = 24
+                # Use minimum readable font even if it's slightly large
+                chosen_font = MIN_READABLE_FONT
                 title_font, section_font, chosen_lines, chosen_content_height = wrap_and_check_fit(chosen_font)
+                logger.info(f"⚠️ Using minimum font {MIN_READABLE_FONT}px - overlay may exceed ideal size")
                 logger.warning("⚠️ Text is long; using minimum font and allowing overlay to hit max height")
 
             # Compute final overlay height tightly based on content, clamped between min and max
             overlay_height = max(min_overlay_px, min(chosen_content_height, max_overlay_px))
             overlay_start = height - overlay_height
+            logger.info(f"🔧 Font size: {chosen_font}px for {len(chosen_lines)} lines")
             logger.info(f"🔧 Computed overlay height: {overlay_height}px (content needed: {chosen_content_height}px)")
 
             # Add semi-transparent overlay at bottom with exactly computed height
@@ -616,51 +620,126 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         """
         try:
             logger.info("📤 Posting to Instagram (direct method)...")
-            
-            # Step 1: Create media object
+
+            # Ensure the image URL is reachable and likely downloadable by Instagram
+            def ensure_image_accessible(url: str) -> str:
+                """Return a public image URL that Instagram can fetch. If the provided
+                URL is unreachable or too large, download, recompress and re-upload it
+                via our upload_image() helper and return that new URL."""
+                try:
+                    head = requests.head(url, timeout=10, allow_redirects=True)
+                except Exception:
+                    head = None
+
+                if head is None or head.status_code != 200:
+                    logger.warning(f"⚠️ Image URL not reachable (HEAD): {url} - will reupload")
+                else:
+                    ctype = head.headers.get('Content-Type', '')
+                    clen = head.headers.get('Content-Length')
+                    if not ctype.startswith('image'):
+                        logger.warning(f"⚠️ Image URL Content-Type not image: {ctype} - will reupload")
+                    else:
+                        # If content-length exists and is < 8MB, trust it
+                        try:
+                            if clen and int(clen) < 8 * 1024 * 1024:
+                                logger.info("✅ Image URL looks reachable and small enough for Instagram")
+                                return url
+                        except Exception:
+                            pass
+
+                # Download image, recompress/rescale and reupload
+                try:
+                    r = requests.get(url, timeout=15)
+                    r.raise_for_status()
+                    img = Image.open(io.BytesIO(r.content)).convert('RGB')
+                    # Ensure portrait crop size used previously (fit within 1080x1350)
+                    img.thumbnail((1080, 1350), Image.Resampling.LANCZOS)
+                    out = io.BytesIO()
+                    img.save(out, format='JPEG', quality=90, optimize=True, subsampling=0)
+                    out.seek(0)
+                    new_url = self.upload_image(out.getvalue())
+                    if new_url:
+                        logger.info(f"✅ Reuploaded optimized image for Instagram: {new_url}")
+                        return new_url
+                    else:
+                        logger.error("❌ Reupload failed - will fallback to original URL")
+                        return url
+                except Exception as e:
+                    logger.error(f"❌ Could not reupload image: {e}")
+                    return url
+
+            final_image_url = ensure_image_accessible(image_url)
+
+            # Attempt to create and publish media with retries and backoff
             create_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media"
-            create_params = {
-                "image_url": image_url,
-                "caption": caption,
-                "access_token": self.access_token
-            }
-            
-            create_response = requests.post(create_url, params=create_params, timeout=30)
-            
-            if create_response.status_code != 200:
-                logger.error(f"❌ Failed to create media object: {create_response.text}")
-                return {'success': False, 'error': 'Failed to create media object'}
-            
-            creation_id = create_response.json().get('id')
-            logger.info(f"✅ Media object created: {creation_id}")
-            
-            # Wait for Instagram to process the image (especially important for hosted images)
-            logger.info("⏳ Waiting 5 seconds for Instagram to process the image...")
-            time.sleep(5)
-            
-            # Step 2: Publish media
             publish_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media_publish"
-            publish_params = {
-                "creation_id": creation_id,
-                "access_token": self.access_token
-            }
-            
-            publish_response = requests.post(publish_url, params=publish_params, timeout=30)
-            
-            if publish_response.status_code != 200:
-                logger.error(f"❌ Failed to publish media: {publish_response.text}")
-                return {'success': False, 'error': 'Failed to publish media'}
-            
-            post_id = publish_response.json().get('id')
-            logger.info(f"🎉 Successfully posted to Instagram: {post_id}")
-            
-            return {
-                'success': True,
-                'post_id': post_id,
-                'instagram_url': f"https://www.instagram.com/p/{post_id}/",
-                'creation_id': creation_id
-            }
-            
+
+            max_attempts = 3
+            creation_id = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    logger.info(f"🔁 Media creation attempt {attempt} for URL: {final_image_url}")
+                    create_params = {
+                        "image_url": final_image_url,
+                        "caption": caption,
+                        "access_token": self.access_token
+                    }
+                    create_response = requests.post(create_url, params=create_params, timeout=30)
+                    if create_response.status_code == 200:
+                        creation_id = create_response.json().get('id')
+                        logger.info(f"✅ Media object created: {creation_id}")
+                        break
+                    else:
+                        logger.warning(f"⚠️ Create media failed (HTTP {create_response.status_code}): {create_response.text}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Exception creating media (attempt {attempt}): {e}")
+
+                sleep_time = 2 ** attempt
+                logger.info(f"⏳ Waiting {sleep_time}s before retrying media creation...")
+                time.sleep(sleep_time)
+
+                # If Instagram complained or we had timeout, try reuploading a recompressed image once
+                if attempt == 1:
+                    logger.info("🔧 Attempting to reupload optimized image and retry creation")
+                    final_image_url = ensure_image_accessible(final_image_url)
+
+            if not creation_id:
+                logger.error("❌ Could not create media object after retries")
+                return {'success': False, 'error': 'Failed to create media object after retries'}
+
+            # Wait for Instagram to process the image (give it more time)
+            logger.info("⏳ Waiting 10 seconds for Instagram to process the image...")
+            time.sleep(10)
+
+            # Publish media (with a couple retries)
+            for attempt in range(1, 4):
+                try:
+                    publish_params = {
+                        "creation_id": creation_id,
+                        "access_token": self.access_token
+                    }
+                    publish_response = requests.post(publish_url, params=publish_params, timeout=30)
+                    if publish_response.status_code == 200:
+                        post_id = publish_response.json().get('id')
+                        logger.info(f"🎉 Successfully posted to Instagram: {post_id}")
+                        return {
+                            'success': True,
+                            'post_id': post_id,
+                            'instagram_url': f"https://www.instagram.com/p/{post_id}/",
+                            'creation_id': creation_id
+                        }
+                    else:
+                        logger.warning(f"⚠️ Publish failed (HTTP {publish_response.status_code}): {publish_response.text}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Exception publishing media (attempt {attempt}): {e}")
+
+                wait = 2 ** attempt
+                logger.info(f"⏳ Waiting {wait}s before retrying publish...")
+                time.sleep(wait)
+
+            logger.error("❌ Failed to publish media after retries")
+            return {'success': False, 'error': 'Failed to publish media after retries'}
+
         except Exception as e:
             logger.error(f"❌ Error posting to Instagram: {e}")
             return {'success': False, 'error': str(e)}
