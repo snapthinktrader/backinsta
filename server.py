@@ -17,6 +17,7 @@ import logging
 # Import local modules
 from config import Config
 from database import BackInstaDB
+from youtube_shorts import YouTubeShortsUploader
 
 # Setup logging
 logging.basicConfig(
@@ -37,6 +38,16 @@ class NewsToInstagramPipeline:
         
         # Initialize BackInsta tracking database
         self.db = BackInstaDB(Config.MONGODB_URI)
+        
+        # Initialize YouTube Shorts uploader (if enabled)
+        self.youtube_uploader = None
+        use_youtube = os.getenv('USE_YOUTUBE_SHORTS', 'false').lower() == 'true'
+        if use_youtube:
+            try:
+                self.youtube_uploader = YouTubeShortsUploader()
+                logger.info("✅ YouTube Shorts uploader initialized")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize YouTube Shorts uploader: {e}")
         
         # Initialize Webstory MongoDB connection
         self.webstory_db = None
@@ -448,25 +459,66 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             title_font = get_font(chosen_font)
             section_font = get_font(int(chosen_font * 0.7))
 
-            # Add semi-transparent overlay at bottom with exactly computed height
-            overlay = Image.new('RGBA', (width, overlay_height), (0, 0, 0, 180))
-            img.paste(overlay, (0, overlay_start), overlay)
-            draw = ImageDraw.Draw(img)
+            # No black overlay - text will be directly on image with outline/shadow for readability
+            # Convert to RGBA for transparency support
+            img = img.convert('RGBA')
+            
+            # Create a transparent overlay layer for drawing text
+            txt_layer = Image.new('RGBA', (width, height), (255, 255, 255, 0))
+            draw = ImageDraw.Draw(txt_layer)
 
-            # Now prepare wrapped title and starting y position
-            wrapped_title = '\n'.join(chosen_lines)
+            # Function to draw text with outline for better readability on any background
+            def draw_text_with_outline(xy, text, font, fill_color, outline_color=(0, 0, 0, 255), outline_width=3):
+                x, y = xy
+                # Draw outline
+                for adj_x in range(-outline_width, outline_width + 1):
+                    for adj_y in range(-outline_width, outline_width + 1):
+                        if adj_x != 0 or adj_y != 0:
+                            draw.text((x + adj_x, y + adj_y), text, font=font, fill=outline_color)
+                # Draw main text
+                draw.text((x, y), text, font=font, fill=fill_color)
+
+            # Calculate starting position for text at bottom
+            overlay_start = height - overlay_height
             current_y = overlay_start + padding
             
-            # 1. Draw section tag at top (smaller, elegant)
+            # 1. Draw section tag at top (smaller, elegant) with outline
             section_text = f"#{section.upper()}"
-            draw.text((padding, current_y), section_text, font=section_font, fill=(255, 215, 0))
+            draw_text_with_outline((padding, current_y), section_text, section_font, (255, 215, 0, 255))
             current_y += int(base_font_size * 0.9)
             
-            # 2. Draw title with better spacing between lines
+            # 2. Draw title with better spacing between lines and outline
+            wrapped_title = '\n'.join(chosen_lines)
             title_lines = wrapped_title.split('\n')
             for line in title_lines:
-                draw.text((padding, current_y), line, font=title_font, fill=(255, 255, 255))
+                draw_text_with_outline((padding, current_y), line, title_font, (255, 255, 255, 255))
                 current_y += int(base_font_size * 1.15)  # Tighter line spacing
+            
+            # 3. Add forexyy.com logo watermark in top-right corner
+            try:
+                logo_path = os.path.join(os.path.dirname(__file__), 'forexyy_logo.png')
+                if os.path.exists(logo_path):
+                    logo = Image.open(logo_path).convert('RGBA')
+                    # Resize logo to be 15% of image width, maintaining aspect ratio
+                    logo_width = int(width * 0.15)
+                    logo_ratio = logo_width / logo.width
+                    logo_height = int(logo.height * logo_ratio)
+                    logo = logo.resize((logo_width, logo_height), Image.Resampling.LANCZOS)
+                    
+                    # Position in top-right corner with some padding
+                    logo_x = width - logo_width - 20
+                    logo_y = 20
+                    txt_layer.paste(logo, (logo_x, logo_y), logo)
+                    logger.info(f"✅ Added forexyy.com logo watermark: {logo_width}x{logo_height}px")
+                else:
+                    logger.warning(f"⚠️ Logo not found at {logo_path}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not add logo watermark: {e}")
+            
+            # Composite the text layer onto the image
+            img = Image.alpha_composite(img, txt_layer)
+            # Convert back to RGB for JPEG
+            img = img.convert('RGB')
             
             # Save to BytesIO with maximum quality for sharp text
             output = io.BytesIO()
@@ -641,6 +693,93 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             logger.error(f"❌ Error downloading/buffering image: {e}")
             return None
     
+    def convert_image_to_video_reel(self, image_path: str, duration: int = 7) -> Optional[str]:
+        """
+        Convert static image to video Reel with zoom animation and background music
+        
+        Args:
+            image_path: Path to the image file
+            duration: Video duration in seconds (default 7)
+            
+        Returns:
+            Path to created video file or None if failed
+        """
+        try:
+            # MoviePy v2.x uses different import path
+            try:
+                from moviepy import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudioClip
+            except ImportError:
+                # Fallback for older MoviePy versions
+                from moviepy.editor import ImageClip, AudioFileClip, CompositeVideoClip, CompositeAudioClip
+            
+            import numpy as np
+            import tempfile
+            from audio_config import get_audio_path, USE_AUDIO
+            
+            logger.info(f"🎬 Converting image to {duration}s video Reel (static)...")
+            
+            # Create image clip
+            clip = ImageClip(image_path, duration=duration)
+            
+            # Set video dimensions (1080x1920 for Reels - 9:16 aspect ratio)
+            w, h = 1080, 1920
+            
+            # Resize to fill the Reel dimensions (static, no zoom)
+            video_clip = clip.resized((w, h))
+            
+            # Try to add background music if available
+            final_clip = video_clip
+            if USE_AUDIO:
+                try:
+                    audio_path = get_audio_path()
+                    if audio_path and os.path.exists(audio_path):
+                        logger.info(f"🎵 Adding background music: {audio_path}")
+                        audio = AudioFileClip(audio_path)
+                        
+                        # Loop or trim audio to match video duration
+                        if audio.duration < duration:
+                            # Loop audio
+                            loops_needed = int(duration / audio.duration) + 1
+                            audio = CompositeAudioClip([audio] * loops_needed).subclipped(0, duration)
+                        else:
+                            # Trim audio
+                            audio = audio.subclipped(0, duration)
+                        
+                        # Set audio to video
+                        final_clip = video_clip.with_audio(audio)
+                        logger.info(f"✅ Added {duration}s background music to Reel")
+                    else:
+                        logger.info("ℹ️ No background audio found, creating silent Reel")
+                        logger.info("💡 Tip: Add trending music manually via Instagram app for better reach")
+                except Exception as audio_error:
+                    logger.warning(f"⚠️ Could not add audio: {audio_error}")
+                    final_clip = video_clip
+            else:
+                logger.info("ℹ️ Creating silent Reel (set USE_BACKGROUND_AUDIO=true to enable)")
+                logger.info("💡 Recommendation: Post silent Reels and add Instagram trending sounds via app")
+            
+            # Export video
+            temp_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+            temp_video.close()
+            
+            final_clip.write_videofile(
+                temp_video.name,
+                fps=30,
+                codec='libx264',
+                audio_codec='aac' if hasattr(final_clip, 'audio') and final_clip.audio else None,
+                logger=None,  # Suppress moviepy logs
+                preset='ultrafast'  # Faster encoding
+            )
+            
+            logger.info(f"✅ Created video Reel: {temp_video.name}")
+            return temp_video.name
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create video Reel: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
     def post_to_instagram_direct(self, image_url: str, caption: str) -> Dict:
         """
         Post directly to Instagram using Graph API
@@ -708,16 +847,32 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             create_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media"
             publish_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media_publish"
 
+            # Detect if it's a video (Reel) or image
+            is_video = final_image_url.lower().endswith(('.mp4', '.mov', '.avi'))
+            media_type = "VIDEO" if is_video else "IMAGE"
+            logger.info(f"📹 Detected media type: {media_type}")
+
             max_attempts = 3
             creation_id = None
             for attempt in range(1, max_attempts + 1):
                 try:
                     logger.info(f"🔁 Media creation attempt {attempt} for URL: {final_image_url}")
-                    create_params = {
-                        "image_url": final_image_url,
-                        "caption": caption,
-                        "access_token": self.access_token
-                    }
+                    
+                    # Different parameters for video vs image
+                    if is_video:
+                        create_params = {
+                            "media_type": "REELS",
+                            "video_url": final_image_url,
+                            "caption": caption,
+                            "access_token": self.access_token
+                        }
+                    else:
+                        create_params = {
+                            "image_url": final_image_url,
+                            "caption": caption,
+                            "access_token": self.access_token
+                        }
+                    
                     create_response = requests.post(create_url, params=create_params, timeout=30)
                     if create_response.status_code == 200:
                         creation_id = create_response.json().get('id')
@@ -807,8 +962,55 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 article.get('section', 'News')
             )
             
-            # Create caption
+            # Option to convert to Reel (currently disabled - enable by setting env var)
+            use_reels = os.getenv('USE_INSTAGRAM_REELS', 'false').lower() == 'true'
+            video_path = None
+            temp_img_path = None
+            
+            if use_reels and processed_image_url:
+                logger.info("🎬 Converting to Instagram Reel...")
+                # Download the processed image first
+                try:
+                    import tempfile
+                    img_response = requests.get(processed_image_url, timeout=15)
+                    if img_response.status_code == 200:
+                        temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                        temp_img.write(img_response.content)
+                        temp_img.close()
+                        temp_img_path = temp_img.name
+                        
+                        # Convert to video Reel
+                        video_path = self.convert_image_to_video_reel(temp_img_path, duration=7)
+                        
+                        if video_path:
+                            # Upload video to hosting service
+                            with open(video_path, 'rb') as vf:
+                                video_url = self.upload_image(vf.read())  # imgbb supports videos
+                                
+                            if video_url:
+                                logger.info(f"✅ Reel created and uploaded: {video_url}")
+                                final_image_url = video_url
+                            else:
+                                logger.warning("⚠️ Failed to upload Reel, using image")
+                                final_image_url = processed_image_url
+                            
+                            # Don't cleanup yet - we might need the video for YouTube
+                        else:
+                            logger.warning("⚠️ Failed to create Reel, using image")
+                            final_image_url = processed_image_url
+                            video_path = None
+                except Exception as reel_error:
+                    logger.warning(f"⚠️ Reel creation failed: {reel_error}, using image")
+                    final_image_url = processed_image_url if processed_image_url else image_url
+                    video_path = None
+            else:
+                final_image_url = processed_image_url if processed_image_url else image_url
+            
+            # Create caption with AI analysis
             caption = self.create_instagram_caption(article)
+            
+            # Extract AI analysis for YouTube (it's the first part of the caption before hashtags)
+            ai_analysis = self.generate_ai_analysis(article)
             
             # Try posting with processed image first, fallback to original if it fails
             final_image_url = processed_image_url if processed_image_url else image_url
@@ -819,7 +1021,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 logger.warning("⚠️ Processed image rejected, retrying with original image...")
                 result = self.post_to_instagram_direct(image_url, caption)
             
-            if result['success']:
+            instagram_success = result['success']
+            youtube_success = False
+            
+            if instagram_success:
                 # Mark article as posted in memory
                 self.posted_articles.add(article.get('url'))
                 
@@ -830,13 +1035,78 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 except Exception as db_error:
                     logger.warning(f"⚠️ Could not save to database: {db_error}")
                 
-                logger.info(f"✅ Article posted successfully!")
-                logger.info(f"📸 Post ID: {result.get('post_id')}")
+                logger.info(f"✅ Article posted to Instagram successfully!")
+                logger.info(f"📸 Instagram Post ID: {result.get('post_id')}")
                 logger.info(f"🔗 Instagram URL: {result.get('instagram_url')}")
-                
+            else:
+                logger.warning(f"⚠️ Instagram posting failed: {result.get('error')}")
+                logger.info("🎬 Continuing with YouTube Shorts anyway...")
+            
+            # ALWAYS attempt YouTube if enabled and we have a video (independent of Instagram)
+            if self.youtube_uploader and use_reels and video_path and os.path.exists(video_path):
+                try:
+                    logger.info("\n🎬 Uploading to YouTube Shorts...")
+                    youtube_result = self.youtube_uploader.create_short_from_article(
+                        video_path=video_path,
+                        article=article,
+                        ai_analysis=ai_analysis  # Pass AI analysis to YouTube
+                    )
+                    
+                    if youtube_result.get('success'):
+                        youtube_success = True
+                        logger.info(f"✅ YouTube Short uploaded successfully!")
+                        logger.info(f"📹 YouTube Video ID: {youtube_result.get('video_id')}")
+                        logger.info(f"🔗 YouTube URL: {youtube_result.get('video_url')}")
+                        
+                        # Save YouTube info to database
+                        try:
+                            if self.db is not None:
+                                # If Instagram succeeded, update existing record
+                                if instagram_success:
+                                    self.db.posts.update_one(
+                                        {'article_url': article.get('url')},
+                                        {'$set': {
+                                            'youtube_video_id': youtube_result.get('video_id'),
+                                            'youtube_url': youtube_result.get('video_url'),
+                                            'youtube_posted_at': datetime.utcnow()
+                                        }}
+                                    )
+                                else:
+                                    # If Instagram failed, create new record for YouTube only
+                                    self.db.mark_as_posted(article, {
+                                        'success': True,
+                                        'youtube_video_id': youtube_result.get('video_id'),
+                                        'youtube_url': youtube_result.get('video_url'),
+                                        'youtube_posted_at': datetime.utcnow()
+                                    })
+                                    self.posted_articles.add(article.get('url'))
+                        except Exception as db_error:
+                            logger.warning(f"⚠️ Could not save YouTube info to database: {db_error}")
+                    else:
+                        logger.warning(f"⚠️ YouTube upload failed: {youtube_result.get('error')}")
+                except Exception as yt_error:
+                    logger.warning(f"⚠️ YouTube Shorts upload error: {yt_error}")
+            
+            # Cleanup temporary files
+            try:
+                if video_path and os.path.exists(video_path):
+                    os.unlink(video_path)
+                if temp_img_path and os.path.exists(temp_img_path):
+                    os.unlink(temp_img_path)
+            except Exception as cleanup_error:
+                logger.warning(f"⚠️ Cleanup error: {cleanup_error}")
+            
+            # Consider success if either platform succeeded
+            if instagram_success or youtube_success:
+                if instagram_success and youtube_success:
+                    logger.info("🎉 Multi-platform success: Posted to both Instagram and YouTube!")
+                elif instagram_success:
+                    logger.info("✅ Posted to Instagram (YouTube not configured or failed)")
+                elif youtube_success:
+                    logger.info("✅ Posted to YouTube (Instagram failed but YouTube succeeded)")
                 return True
             else:
-                logger.error(f"❌ Failed to post article: {result.get('error')}")
+                logger.error(f"❌ Both platforms failed")
                 return False
                 
         except Exception as e:

@@ -41,9 +41,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         pass
 
 def post_article():
-    """Post a single article to Instagram"""
+    """Post a single article to Instagram and YouTube (both platforms attempted independently)"""
     try:
-        logger.info("🔄 Starting posting cycle...")
+        logger.info("🔄 Starting multi-platform posting cycle...")
         
         # Create pipeline
         pipeline = NewsToInstagramPipeline()
@@ -56,14 +56,19 @@ def post_article():
             articles = pipeline.fetch_latest_news(section=section, limit=1)
             
             if articles:
-                logger.info(f"✅ Found article from {section}: {articles[0].get('title')[:60]}...")
-                success = pipeline.post_article_to_instagram(articles[0])
+                article = articles[0]
+                logger.info(f"✅ Found article from {section}: {article.get('title')[:60]}...")
                 
+                # Attempt posting to both platforms
+                success = pipeline.post_article_to_instagram(article)
+                
+                # Always consider it a success if either platform worked
+                # (The post_article_to_instagram method handles both Instagram + YouTube)
                 if success:
-                    logger.info(f"🎉 Successfully posted article from {section} section!")
+                    logger.info(f"🎉 Successfully posted to at least one platform from {section} section!")
                     return True
                 else:
-                    logger.warning(f"⚠️ Failed to post article from {section}, trying next section...")
+                    logger.warning(f"⚠️ Both platforms failed for {section}, trying next section...")
                     continue
             else:
                 logger.warning(f"⚠️ No articles found in {section} section")

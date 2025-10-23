@@ -53,7 +53,7 @@ class BackInstaDB:
             self.client.admin.command('ping')
             logger.info("✅ MongoDB connection successful")
             
-            # Create indexes
+            # Create indexes for efficient queries
             self.collection.create_index("article_url", unique=True)
             self.collection.create_index("posted_at")
             self.collection.create_index("section")
@@ -64,7 +64,7 @@ class BackInstaDB:
     
     def mark_as_posted(self, article: Dict, post_result: Dict) -> bool:
         """
-        Mark article as posted
+        Mark article as posted (lightweight: only stores article ID and minimal data)
         
         Args:
             article: Article data
@@ -77,19 +77,13 @@ class BackInstaDB:
             return False
         
         try:
+            # Store minimal data to save MongoDB space
             doc = {
-                'article_url': article.get('url'),
-                'article_title': article.get('title'),
-                'article_section': article.get('section'),
+                'article_url': article.get('url'),  # NYT article URL as unique identifier
+                'article_title': article.get('title')[:100],  # Truncated title
+                'section': article.get('section'),
                 'instagram_post_id': post_result.get('post_id'),
-                'instagram_url': post_result.get('instagram_url'),
-                'posted_at': datetime.now(),
-                'article_data': {
-                    'abstract': article.get('abstract'),
-                    'source': article.get('source'),
-                    'byline': article.get('byline'),
-                    'published_date': article.get('publishedDate')
-                }
+                'posted_at': datetime.now()
             }
             
             self.collection.insert_one(doc)
@@ -155,7 +149,7 @@ class BackInstaDB:
             
             # Get counts by section
             pipeline = [
-                {'$group': {'_id': '$article_section', 'count': {'$sum': 1}}},
+                {'$group': {'_id': '$section', 'count': {'$sum': 1}}},
                 {'$sort': {'count': -1}}
             ]
             section_stats = list(self.collection.aggregate(pipeline))
