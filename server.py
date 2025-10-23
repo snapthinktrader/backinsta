@@ -863,7 +863,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             media_type = "VIDEO" if is_video else "IMAGE"
             logger.info(f"📹 Detected media type: {media_type}")
 
-            max_attempts = 3
+            # Single attempt only - no retries to avoid duplicate media objects
+            max_attempts = 1
             creation_id = None
             for attempt in range(1, max_attempts + 1):
                 try:
@@ -891,53 +892,48 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                         break
                     else:
                         logger.warning(f"⚠️ Create media failed (HTTP {create_response.status_code}): {create_response.text}")
+                        # Don't retry - just fail and let the next cycle try again
+                        break
                 except Exception as e:
                     logger.warning(f"⚠️ Exception creating media (attempt {attempt}): {e}")
-
-                sleep_time = 2 ** attempt
-                logger.info(f"⏳ Waiting {sleep_time}s before retrying media creation...")
-                time.sleep(sleep_time)
-
-                # If Instagram complained or we had timeout, try reuploading a recompressed image once
-                if attempt == 1:
-                    logger.info("🔧 Attempting to reupload optimized image and retry creation")
-                    final_image_url = ensure_image_accessible(final_image_url)
+                    break
 
             if not creation_id:
                 logger.error("❌ Could not create media object after retries")
                 return {'success': False, 'error': 'Failed to create media object after retries'}
 
-            # Wait for Instagram to process the image (give it more time)
+            # Wait for Instagram to process the image
             logger.info("⏳ Waiting 10 seconds for Instagram to process the image...")
             time.sleep(10)
 
-            # Publish media (with a couple retries)
-            for attempt in range(1, 4):
-                try:
-                    publish_params = {
-                        "creation_id": creation_id,
-                        "access_token": self.access_token
+            # Publish media (single attempt only to avoid duplicates)
+            try:
+                publish_params = {
+                    "creation_id": creation_id,
+                    "access_token": self.access_token
+                }
+                publish_response = requests.post(publish_url, params=publish_params, timeout=30)
+                if publish_response.status_code == 200:
+                    post_id = publish_response.json().get('id')
+                    logger.info(f"🎉 Successfully posted to Instagram: {post_id}")
+                    return {
+                        'success': True,
+                        'post_id': post_id,
+                        'instagram_url': f"https://www.instagram.com/p/{post_id}/",
+                        'creation_id': creation_id
                     }
-                    publish_response = requests.post(publish_url, params=publish_params, timeout=30)
-                    if publish_response.status_code == 200:
-                        post_id = publish_response.json().get('id')
-                        logger.info(f"🎉 Successfully posted to Instagram: {post_id}")
-                        return {
-                            'success': True,
-                            'post_id': post_id,
-                            'instagram_url': f"https://www.instagram.com/p/{post_id}/",
-                            'creation_id': creation_id
-                        }
-                    else:
-                        logger.warning(f"⚠️ Publish failed (HTTP {publish_response.status_code}): {publish_response.text}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Exception publishing media (attempt {attempt}): {e}")
+                else:
+                    logger.warning(f"⚠️ Publish failed (HTTP {publish_response.status_code}): {publish_response.text}")
+                    # Check if rate limited
+                    error_text = publish_response.text
+                    if 'rate limit' in error_text.lower() or '"code":4' in error_text or publish_response.status_code == 403:
+                        logger.warning("⚠️ Instagram rate limited - will retry in next cycle")
+                    return {'success': False, 'error': error_text, 'creation_id': creation_id}
+            except Exception as e:
+                logger.warning(f"⚠️ Exception publishing media: {e}")
+                return {'success': False, 'error': str(e), 'creation_id': creation_id}
 
-                wait = 2 ** attempt
-                logger.info(f"⏳ Waiting {wait}s before retrying publish...")
-                time.sleep(wait)
-
-            logger.error("❌ Failed to publish media after retries")
+            logger.error("❌ Failed to publish media")
             return {'success': False, 'error': 'Failed to publish media after retries'}
 
         except Exception as e:
@@ -999,11 +995,14 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                         temp_img.write(img_response.content)
                         temp_img.close()
                         temp_img_path = temp_img.name
+                        logger.info(f"✅ Downloaded image to: {temp_img_path}")
                         
                         # Convert to video Reel
+                        logger.info("🎬 Converting image to 7s video Reel (static)...")
                         video_path = self.convert_image_to_video_reel(temp_img_path, duration=7)
                         
                         if video_path:
+                            logger.info(f"✅ Created video Reel: {video_path} (size: {os.path.getsize(video_path)} bytes)")
                             # Upload video to hosting service
                             with open(video_path, 'rb') as vf:
                                 video_url = self.upload_image(vf.read())  # imgbb supports videos
@@ -1016,15 +1015,21 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                                 final_image_url = processed_image_url
                             
                             # Don't cleanup yet - we might need the video for YouTube
+                            logger.info(f"📹 Video saved for YouTube: {video_path}")
                         else:
-                            logger.warning("⚠️ Failed to create Reel, using image")
+                            logger.warning("⚠️ Failed to create Reel (returned None), using image")
                             final_image_url = processed_image_url
                             video_path = None
+                    else:
+                        logger.warning(f"⚠️ Failed to download image (HTTP {img_response.status_code}), skipping video creation")
+                        final_image_url = processed_image_url
+                        video_path = None
                 except Exception as reel_error:
-                    logger.warning(f"⚠️ Reel creation failed: {reel_error}, using image")
+                    logger.error(f"❌ Reel creation exception: {reel_error}, using image", exc_info=True)
                     final_image_url = processed_image_url if processed_image_url else image_url
                     video_path = None
             else:
+                logger.info(f"ℹ️ Skipping video creation: use_reels={use_reels}, processed_image_url={bool(processed_image_url)}")
                 final_image_url = processed_image_url if processed_image_url else image_url
             
             # Create caption with AI analysis
@@ -1069,6 +1074,7 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 logger.info("🎬 Continuing with YouTube Shorts anyway...")
             
             # ALWAYS attempt YouTube if enabled and we have a video (independent of Instagram)
+            logger.info(f"🔍 YouTube check: uploader={bool(self.youtube_uploader)}, use_reels={use_reels}, video_path={video_path}, exists={os.path.exists(video_path) if video_path else False}")
             if self.youtube_uploader and use_reels and video_path and os.path.exists(video_path):
                 try:
                     logger.info("\n🎬 Uploading to YouTube Shorts...")
