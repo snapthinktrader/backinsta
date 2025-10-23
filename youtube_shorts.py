@@ -7,6 +7,8 @@ Posts video Reels as YouTube Shorts
 import os
 import pickle
 import logging
+import base64
+import json
 from typing import Optional, Dict
 from pathlib import Path
 
@@ -46,6 +48,32 @@ class YouTubeShortsUploader:
     def _authenticate(self):
         """Authenticate with YouTube API"""
         creds = None
+        
+        # Check for base64-encoded credentials from environment (for Render deployment)
+        credentials_base64 = os.getenv('YOUTUBE_CREDENTIALS_BASE64')
+        token_base64 = os.getenv('YOUTUBE_TOKEN_BASE64')
+        
+        # Decode and save credentials if provided via environment
+        if credentials_base64 and not os.path.exists(self.credentials_file):
+            try:
+                logger.info("📦 Decoding YouTube credentials from environment variable...")
+                credentials_json = base64.b64decode(credentials_base64).decode('utf-8')
+                with open(self.credentials_file, 'w') as f:
+                    f.write(credentials_json)
+                logger.info("✅ YouTube credentials file created from environment")
+            except Exception as e:
+                logger.error(f"❌ Failed to decode YouTube credentials: {e}")
+        
+        # Decode and save token if provided via environment
+        if token_base64 and not os.path.exists(self.token_file):
+            try:
+                logger.info("📦 Decoding YouTube token from environment variable...")
+                token_data = base64.b64decode(token_base64)
+                with open(self.token_file, 'wb') as f:
+                    f.write(token_data)
+                logger.info("✅ YouTube token file created from environment")
+            except Exception as e:
+                logger.error(f"❌ Failed to decode YouTube token: {e}")
         
         # Load token if exists
         if os.path.exists(self.token_file):
