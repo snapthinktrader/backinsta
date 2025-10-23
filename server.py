@@ -103,12 +103,17 @@ class NewsToInstagramPipeline:
                     data = response.json()
                     nyt_articles = data.get('results', [])
                     
-                    # Get list of already posted article URLs
+                    # Get list of already posted article IDs and URLs
                     posted_urls = set()
+                    posted_article_ids = set()
                     try:
                         if self.db is not None and self.db.collection is not None:
-                            posted_docs = self.db.collection.find({}, {'article_url': 1})
-                            posted_urls = {doc['article_url'] for doc in posted_docs if 'article_url' in doc}
+                            posted_docs = self.db.collection.find({}, {'article_url': 1, 'article_id': 1})
+                            for doc in posted_docs:
+                                if 'article_url' in doc:
+                                    posted_urls.add(doc['article_url'])
+                                if 'article_id' in doc:
+                                    posted_article_ids.add(doc['article_id'])
                             logger.info(f"📋 Found {len(posted_urls)} already posted articles in database")
                     except Exception as e:
                         logger.warning(f"Could not fetch posted URLs: {e}")
@@ -120,9 +125,14 @@ class NewsToInstagramPipeline:
                     articles = []
                     for nyt_article in nyt_articles:
                         url = nyt_article.get('url', '')
+                        title = nyt_article.get('title', '')
                         
-                        # Skip if already posted
-                        if url in posted_urls:
+                        # Generate article ID to check for duplicates based on title
+                        from database import generate_article_id
+                        article_id = generate_article_id(title=title, url=url)
+                        
+                        # Skip if already posted (check both URL and article ID)
+                        if url in posted_urls or article_id in posted_article_ids:
                             continue
                         
                         # Convert multimedia
@@ -1012,17 +1022,22 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Extract AI analysis for YouTube (it's the first part of the caption before hashtags)
             ai_analysis = self.generate_ai_analysis(article)
             
-            # Try posting with processed image first, fallback to original if it fails
+            # Post with processed image (don't retry with original to avoid duplicates)
             final_image_url = processed_image_url if processed_image_url else image_url
             result = self.post_to_instagram_direct(final_image_url, caption)
             
-            # If posting failed and we used processed image, retry with original
-            if not result['success'] and processed_image_url and processed_image_url != image_url:
-                logger.warning("⚠️ Processed image rejected, retrying with original image...")
-                result = self.post_to_instagram_direct(image_url, caption)
-            
             instagram_success = result['success']
             youtube_success = False
+            
+            # Check if Instagram failure was due to rate limiting (error code 4 or 403)
+            instagram_rate_limited = False
+            if not instagram_success:
+                error_msg = str(result.get('error', ''))
+                if 'rate limit' in error_msg.lower() or 'code":4' in error_msg or 'HTTP 403' in error_msg:
+                    instagram_rate_limited = True
+                    logger.warning("⚠️ Instagram is rate limited - marking article as attempted to prevent re-posting")
+                    # Mark article as posted in memory to prevent immediate retry
+                    self.posted_articles.add(article.get('url'))
             
             if instagram_success:
                 # Mark article as posted in memory

@@ -5,6 +5,7 @@ Stores posted articles to prevent duplicates and track analytics
 """
 
 import os
+import hashlib
 from datetime import datetime
 from typing import Dict, List, Optional
 import logging
@@ -18,6 +19,32 @@ try:
 except ImportError:
     MONGODB_AVAILABLE = False
     logger.warning("⚠️ pymongo not installed. Database features disabled.")
+
+
+def generate_article_id(title: str, url: str = None) -> str:
+    """
+    Generate a unique article ID from title and optionally URL
+    This ensures we never post the same article twice
+    
+    Args:
+        title: Article title/headline
+        url: Optional article URL for extra uniqueness
+        
+    Returns:
+        Unique article ID (MD5 hash)
+    """
+    # Normalize title: lowercase, remove extra whitespace
+    normalized_title = ' '.join(title.lower().strip().split())
+    
+    # Create unique string
+    if url:
+        unique_string = f"{normalized_title}|{url}"
+    else:
+        unique_string = normalized_title
+    
+    # Generate MD5 hash (first 16 chars is enough for uniqueness)
+    article_id = hashlib.md5(unique_string.encode()).hexdigest()[:16]
+    return article_id
 
 
 class BackInstaDB:
@@ -54,9 +81,16 @@ class BackInstaDB:
             logger.info("✅ MongoDB connection successful")
             
             # Create indexes for efficient queries
-            self.collection.create_index("article_url", unique=True)
-            self.collection.create_index("posted_at")
-            self.collection.create_index("section")
+            try:
+                self.collection.create_index("article_url", unique=True)
+                self.collection.create_index("posted_at")
+                self.collection.create_index("section")
+                
+                # Create article_id index (sparse to allow old documents without article_id)
+                self.collection.create_index("article_id", unique=True, sparse=True)
+                logger.info("✅ Database indexes created")
+            except Exception as idx_error:
+                logger.warning(f"⚠️ Could not create all indexes: {idx_error}")
             
         except Exception as e:
             logger.error(f"❌ MongoDB connection failed: {e}")
@@ -68,7 +102,7 @@ class BackInstaDB:
         
         Args:
             article: Article data
-            post_result: Instagram post result
+            post_result: Instagram/YouTube post result
             
         Returns:
             True if saved successfully
@@ -77,29 +111,44 @@ class BackInstaDB:
             return False
         
         try:
+            # Generate unique article ID from title
+            article_id = generate_article_id(
+                title=article.get('title', ''),
+                url=article.get('url')
+            )
+            
             # Store minimal data to save MongoDB space
             doc = {
-                'article_url': article.get('url'),  # NYT article URL as unique identifier
+                'article_id': article_id,  # Unique ID based on title+URL
+                'article_url': article.get('url'),  # NYT article URL
                 'article_title': article.get('title')[:100],  # Truncated title
                 'section': article.get('section'),
                 'instagram_post_id': post_result.get('post_id'),
+                'youtube_video_id': post_result.get('youtube_video_id'),
+                'youtube_url': post_result.get('youtube_url'),
                 'posted_at': datetime.now()
             }
             
-            self.collection.insert_one(doc)
-            logger.info(f"✅ Article saved to database: {article.get('title')[:50]}")
+            # Use upsert to avoid duplicates (update if article_id exists)
+            self.collection.update_one(
+                {'article_id': article_id},
+                {'$set': doc},
+                upsert=True
+            )
+            logger.info(f"✅ Article saved to database (ID: {article_id}): {article.get('title')[:50]}")
             return True
             
         except Exception as e:
             logger.error(f"❌ Failed to save article to database: {e}")
             return False
     
-    def is_already_posted(self, article_url: str) -> bool:
+    def is_already_posted(self, article_url: str = None, article_title: str = None) -> bool:
         """
-        Check if article has already been posted
+        Check if article has already been posted (by URL or title)
         
         Args:
             article_url: URL of the article
+            article_title: Title of the article
             
         Returns:
             True if already posted
@@ -108,8 +157,19 @@ class BackInstaDB:
             return False
         
         try:
-            result = self.collection.find_one({'article_url': article_url})
-            return result is not None
+            # Check by article ID (generated from title)
+            if article_title:
+                article_id = generate_article_id(title=article_title, url=article_url)
+                result = self.collection.find_one({'article_id': article_id})
+                if result:
+                    return True
+            
+            # Fallback: check by URL
+            if article_url:
+                result = self.collection.find_one({'article_url': article_url})
+                return result is not None
+                
+            return False
         except Exception as e:
             logger.error(f"❌ Error checking if article posted: {e}")
             return False
