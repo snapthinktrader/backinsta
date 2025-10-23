@@ -146,6 +146,7 @@ class NewsToInstagramPipeline:
                                 })
                         
                         article = {
+                            'article_id': article_id,  # ✅ ADD article_id to article dict
                             'title': nyt_article.get('title', ''),
                             'abstract': nyt_article.get('abstract', ''),
                             'url': url,
@@ -954,8 +955,18 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             True if posted successfully, False otherwise
         """
         try:
+            # ✅ SAFETY CHECK: Ensure article_id is present
+            if 'article_id' not in article:
+                from database import generate_article_id
+                article['article_id'] = generate_article_id(
+                    title=article.get('title', ''),
+                    url=article.get('url', '')
+                )
+                logger.info(f"🔖 Generated article_id: {article['article_id']}")
+            
             article_title = article.get('title', 'Unknown Article')
             logger.info(f"\n🚀 Processing article: {article_title}")
+            logger.info(f"🔖 Article ID: {article.get('article_id')}")
             
             # Get image URL
             image_url = self.get_article_image_url(article)

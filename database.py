@@ -101,7 +101,7 @@ class BackInstaDB:
         Mark article as posted (lightweight: only stores article ID and minimal data)
         
         Args:
-            article: Article data
+            article: Article data (should have article_id)
             post_result: Instagram/YouTube post result
             
         Returns:
@@ -111,11 +111,15 @@ class BackInstaDB:
             return False
         
         try:
-            # Generate unique article ID from title
-            article_id = generate_article_id(
-                title=article.get('title', ''),
-                url=article.get('url')
-            )
+            # Use article_id from article dict if present, otherwise generate it
+            if 'article_id' in article:
+                article_id = article['article_id']
+            else:
+                # Fallback: generate from title+URL
+                article_id = generate_article_id(
+                    title=article.get('title', ''),
+                    url=article.get('url')
+                )
             
             # Store minimal data to save MongoDB space
             doc = {
