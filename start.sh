@@ -49,7 +49,59 @@ case $choice in
         ;;
     2)
         echo "🚀 Starting BackInsta scheduler..."
-        python scheduled_poster.py
+        #!/bin/bash
+
+# Multi-Platform News Poster - Quick Start Script
+# This script starts the automated posting system for Instagram Reels and YouTube Shorts
+
+echo "🚀 Starting Multi-Platform News Automation"
+echo "=========================================="
+echo ""
+echo "📸 Instagram: @usdaily24"
+echo "📹 YouTube: forexyynewsletter@gmail.com"
+echo ""
+
+# Set environment variables
+export USE_INSTAGRAM_REELS=true
+export USE_YOUTUBE_SHORTS=true
+export POST_INTERVAL_MINUTES=30  # Post every 30 minutes
+
+# Check if .env file exists in parent directory
+if [ -f "../.env" ]; then
+    echo "✅ Loading environment from ../.env"
+    source ../.env
+else
+    echo "⚠️  No .env file found. Make sure you have:"
+    echo "   - GROQ_API_KEY"
+    echo "   - NYT_API_KEY" 
+    echo "   - IMGBB_API_KEY"
+    echo "   - REACT_APP_ACCESS_TOKEN"
+    echo "   - REACT_APP_INSTAGRAM_BUSINESS_ACCOUNT_ID"
+    echo "   - MONGODB_URI"
+    echo ""
+fi
+
+# Get Python path
+PYTHON_PATH="/Users/mahendrabahubali/.pyenv/versions/3.9.20/bin/python"
+
+# Check if Python exists
+if [ ! -f "$PYTHON_PATH" ]; then
+    echo "❌ Python not found at $PYTHON_PATH"
+    echo "   Using system python3..."
+    PYTHON_PATH="python3"
+fi
+
+echo "🐍 Using Python: $PYTHON_PATH"
+echo ""
+echo "⏰ Posting interval: $POST_INTERVAL_MINUTES minutes"
+echo ""
+echo "Press Ctrl+C to stop"
+echo "=========================================="
+echo ""
+
+# Run the scheduler
+$PYTHON_PATH scheduled_poster.py
+
         ;;
     3)
         echo "👋 Goodbye!"
