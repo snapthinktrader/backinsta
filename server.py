@@ -635,7 +635,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             return None
     
     def upload_video(self, video_bytes: bytes) -> Optional[str]:
-        """Upload video to Catbox (free, supports videos up to 200MB)"""
+        """Upload video to Catbox (free, supports videos up to 200MB) with file.io fallback"""
+        # Try Catbox first
         try:
             logger.info(f"📤 Uploading video to Catbox (size: {len(video_bytes)} bytes)...")
             
@@ -646,7 +647,7 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 'https://catbox.moe/user/api.php',
                 files=files,
                 data=data,
-                timeout=60
+                timeout=30  # Reduced timeout
             )
             
             if response.status_code == 200:
@@ -655,17 +656,41 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     logger.info(f"✅ Uploaded video to Catbox: {url}")
                     return url
                 else:
-                    logger.error(f"❌ Catbox returned unexpected response: {url}")
-                    return None
+                    logger.warning(f"⚠️ Catbox returned unexpected response: {url}")
             else:
-                logger.error(f"❌ Catbox upload failed (HTTP {response.status_code}): {response.text}")
-                return None
+                logger.warning(f"⚠️ Catbox upload failed (HTTP {response.status_code}): {response.text}")
                 
         except Exception as e:
-            logger.error(f"❌ Video upload exception: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return None
+            logger.warning(f"⚠️ Catbox upload exception: {str(e)}")
+        
+        # Fallback to file.io (24-hour temporary hosting)
+        try:
+            logger.info(f"📤 Trying file.io as fallback (size: {len(video_bytes)} bytes)...")
+            
+            files = {'file': ('video.mp4', video_bytes, 'video/mp4')}
+            
+            response = requests.post(
+                'https://file.io',
+                files=files,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('success'):
+                    url = data.get('link')
+                    logger.info(f"✅ Uploaded video to file.io: {url}")
+                    return url
+                else:
+                    logger.error(f"❌ file.io upload failed: {data}")
+            else:
+                logger.error(f"❌ file.io upload failed (HTTP {response.status_code}): {response.text}")
+                
+        except Exception as e:
+            logger.error(f"❌ file.io upload exception: {str(e)}")
+            
+        logger.error(f"❌ All video upload services failed")
+        return None
     
     def get_article_image_url(self, article: Dict) -> Optional[str]:
         """
@@ -766,10 +791,15 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Create image clip
             clip = ImageClip(image_path, duration=duration)
             
-            # Set video dimensions (1080x1920 for Reels - 9:16 aspect ratio)
-            w, h = 1080, 1920
+            # Use the actual image dimensions (1080x1350 for our portrait images)
+            # This works for both Instagram Reels and YouTube Shorts
+            # YouTube Shorts accepts 9:16, but also accepts other portrait ratios
+            from PIL import Image
+            img = Image.open(image_path)
+            w, h = img.size
+            logger.info(f"📐 Video dimensions from image: {w}x{h}")
             
-            # Resize to fill the Reel dimensions (static, no zoom)
+            # Resize to match image dimensions (no distortion)
             video_clip = clip.resized((w, h))
             
             # Try to add background music if available
@@ -867,6 +897,9 @@ Provide ONLY the analysis, no extra labels or formatting:"""
 
                 # Download image, recompress/rescale and reupload
                 try:
+                    from PIL import Image
+                    import io
+                    
                     r = requests.get(url, timeout=15)
                     r.raise_for_status()
                     img = Image.open(io.BytesIO(r.content)).convert('RGB')
@@ -996,8 +1029,23 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 logger.info(f"🔖 Generated article_id: {article['article_id']}")
             
             article_title = article.get('title', 'Unknown Article')
+            article_id = article.get('article_id')
+            article_url = article.get('url', '')
+            
+            # ✅ CHECK: Skip if already posted (before processing)
+            if self.db is not None and self.db.collection is not None:
+                existing = self.db.collection.find_one({
+                    '$or': [
+                        {'article_id': article_id},
+                        {'article_url': article_url}
+                    ]
+                })
+                if existing:
+                    logger.warning(f"⚠️ Article already posted (ID: {article_id}), skipping...")
+                    return False
+            
             logger.info(f"\n🚀 Processing article: {article_title}")
-            logger.info(f"🔖 Article ID: {article.get('article_id')}")
+            logger.info(f"🔖 Article ID: {article_id}")
             
             # Get image URL
             image_url = self.get_article_image_url(article)
