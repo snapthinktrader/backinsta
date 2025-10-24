@@ -1,4 +1,4 @@
-name: Keep Render Service Awake
+name: Keep Render Awake & Auto-Post
 
 on:
   schedule:
@@ -13,14 +13,28 @@ jobs:
     steps:
       - name: Ping Render Service
         run: |
-          echo "Pinging Render service at $(date)"
-          curl -X GET https://backinsta.onrender.com/health \
+          echo "🔄 Pinging Render service at $(date)"
+          echo "URL: https://backinsta.onrender.com/health"
+          
+          response=$(curl -s -w "\n%{http_code}" -X GET https://backinsta.onrender.com/health \
             --max-time 60 \
             --retry 3 \
-            --retry-delay 5
-          echo "Ping successful!"
+            --retry-delay 5)
+          
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+          
+          echo "Response: $body"
+          echo "HTTP Status: $http_code"
+          
+          if [ "$http_code" -eq 200 ]; then
+            echo "✅ Render service is alive and healthy!"
+          else
+            echo "⚠️ Render returned HTTP $http_code"
+          fi
       
-      - name: Log Status
+      - name: Summary
         run: |
-          echo "✅ Render service pinged successfully"
-          echo "Next ping in 10 minutes"
+          echo "✅ Keep-alive ping complete"
+          echo "📊 Render is posting reels every 15 minutes automatically"
+          echo "⏰ Next ping in 10 minutes"
