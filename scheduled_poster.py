@@ -59,21 +59,23 @@ def post_article():
                 article = articles[0]
                 logger.info(f"✅ Found article from {section}: {article.get('title')[:60]}...")
                 
-                # Attempt posting to both platforms
+                # CRITICAL: ONE ATTEMPT PER ARTICLE - NEVER RETRY THE SAME ARTICLE
+                # Even if both platforms fail, we mark it as attempted and move to next cycle
                 success = pipeline.post_article_to_instagram(article)
                 
-                # Always consider it a success if either platform worked
-                # (The post_article_to_instagram method handles both Instagram + YouTube)
+                # Return immediately after first article attempt (success or failure)
+                # The article is already marked as "attempted" in the database
                 if success:
                     logger.info(f"🎉 Successfully posted to at least one platform from {section} section!")
                     return True
                 else:
-                    logger.warning(f"⚠️ Both platforms failed for {section}, trying next section...")
-                    continue
+                    logger.warning(f"⚠️ Both platforms failed for article from {section}")
+                    logger.info(f"✅ Article marked as attempted - will try DIFFERENT article next cycle")
+                    return False  # ← CHANGED: Stop here, don't try more sections
             else:
                 logger.warning(f"⚠️ No articles found in {section} section")
         
-        logger.error("❌ Could not post article from any section")
+        logger.error("❌ Could not find any fresh articles from any section")
         return False
         
     except Exception as e:

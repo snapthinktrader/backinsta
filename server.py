@@ -1249,6 +1249,26 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 return True
             else:
                 logger.error(f"❌ Both platforms failed")
+                
+                # CRITICAL FIX: Mark article as attempted to prevent infinite retry loop
+                # This prevents the same article from being retried in the next cycle
+                logger.warning("⚠️ Marking article as attempted to prevent re-posting in next cycle")
+                self.posted_articles.add(article.get('url'))
+                
+                # Also save to database with failure flag
+                try:
+                    if self.db is not None:
+                        self.db.mark_as_posted(article, {
+                            'success': False,
+                            'error': 'Both Instagram and YouTube failed (quota/rate limits)',
+                            'attempted_at': datetime.utcnow(),
+                            'instagram_rate_limited': instagram_rate_limited,
+                            'platforms_attempted': ['instagram', 'youtube']
+                        })
+                        logger.info("✅ Article marked as attempted in database")
+                except Exception as db_error:
+                    logger.warning(f"⚠️ Could not save failure to database: {db_error}")
+                
                 return False
                 
         except Exception as e:
