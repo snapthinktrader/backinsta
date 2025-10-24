@@ -560,10 +560,11 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             if uploaded_url:
                 logger.info(f"✅ Text overlay image uploaded successfully: {uploaded_url}")
-                return uploaded_url
+                # Return both URL and local path (for video creation)
+                return {'url': uploaded_url, 'local_path': temp_file.name}
             else:
                 logger.warning("⚠️ Failed to upload overlay image, using original image instead")
-                return image_url
+                return {'url': image_url, 'local_path': temp_file.name}
             
         except Exception as e:
             logger.error(f"❌ Could not add text to image: {str(e)}")
@@ -973,30 +974,54 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             # Add text overlay to image
             logger.info("🎨 Adding text overlay to image...")
-            processed_image_url = self.add_text_to_image(
+            processed_image_result = self.add_text_to_image(
                 image_url,
                 article.get('title', ''),
                 article.get('section', 'News')
             )
             
+            # Handle both old string return and new dict return
+            if isinstance(processed_image_result, dict):
+                processed_image_url = processed_image_result.get('url')
+                local_image_path = processed_image_result.get('local_path')
+            else:
+                # Fallback for old string return
+                processed_image_url = processed_image_result
+                local_image_path = None
+            
             # Option to convert to Reel (currently disabled - enable by setting env var)
             use_reels = os.getenv('USE_INSTAGRAM_REELS', 'false').lower() == 'true'
             video_path = None
-            temp_img_path = None
+            temp_img_path = local_image_path  # Use local file instead of re-downloading
+            final_image_url = processed_image_url if processed_image_url else image_url  # Default
             
             if use_reels and processed_image_url:
                 logger.info("🎬 Converting to Instagram Reel...")
-                # Download the processed image first
-                try:
-                    import tempfile
-                    img_response = requests.get(processed_image_url, timeout=15)
-                    if img_response.status_code == 200:
-                        temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
-                        temp_img.write(img_response.content)
-                        temp_img.close()
-                        temp_img_path = temp_img.name
-                        logger.info(f"✅ Downloaded image to: {temp_img_path}")
-                        
+                # Use local image file if available, otherwise download
+                # If we don't have local file, try downloading from URL
+                if not temp_img_path or not os.path.exists(temp_img_path):
+                    if processed_image_url:
+                        try:
+                            import tempfile
+                            logger.info(f"📥 Downloading image from: {processed_image_url}")
+                            img_response = requests.get(processed_image_url, timeout=15)
+                            if img_response.status_code == 200:
+                                temp_img = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                                temp_img.write(img_response.content)
+                                temp_img.close()
+                                temp_img_path = temp_img.name
+                                logger.info(f"✅ Downloaded image to: {temp_img_path}")
+                            else:
+                                logger.warning(f"⚠️ Failed to download image (HTTP {img_response.status_code}), skipping video creation")
+                        except Exception as download_error:
+                            logger.error(f"❌ Download exception: {download_error}")
+                            temp_img_path = None
+                else:
+                    logger.info(f"✅ Using local image file: {temp_img_path}")
+                
+                # Convert to video if we have the image file
+                if temp_img_path and os.path.exists(temp_img_path):
+                    try:
                         # Convert to video Reel
                         logger.info("🎬 Converting image to 7s video Reel (static)...")
                         video_path = self.convert_image_to_video_reel(temp_img_path, duration=7)
@@ -1020,13 +1045,13 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                             logger.warning("⚠️ Failed to create Reel (returned None), using image")
                             final_image_url = processed_image_url
                             video_path = None
-                    else:
-                        logger.warning(f"⚠️ Failed to download image (HTTP {img_response.status_code}), skipping video creation")
-                        final_image_url = processed_image_url
+                    except Exception as reel_error:
+                        logger.error(f"❌ Reel creation exception: {reel_error}, using image", exc_info=True)
+                        final_image_url = processed_image_url if processed_image_url else image_url
                         video_path = None
-                except Exception as reel_error:
-                    logger.error(f"❌ Reel creation exception: {reel_error}, using image", exc_info=True)
-                    final_image_url = processed_image_url if processed_image_url else image_url
+                else:
+                    logger.warning("⚠️ No image file available for video creation")
+                    final_image_url = processed_image_url
                     video_path = None
             else:
                 logger.info(f"ℹ️ Skipping video creation: use_reels={use_reels}, processed_image_url={bool(processed_image_url)}")
