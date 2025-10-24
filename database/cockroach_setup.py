@@ -21,7 +21,13 @@ def get_connection():
         psycopg2.connection: Database connection
     """
     try:
-        conn = psycopg2.connect(COCKROACHDB_URI)
+        # Fix SSL certificate issue on Render by using system certificates
+        uri = COCKROACHDB_URI
+        if 'sslmode=verify-full' in uri and '/opt/render' in os.getcwd():
+            # Running on Render - use system certificates
+            uri = uri.replace('sslmode=verify-full', 'sslmode=require')
+        
+        conn = psycopg2.connect(uri)
         return conn
     except Exception as e:
         print(f"❌ Failed to connect to CockroachDB: {e}")
