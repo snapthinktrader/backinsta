@@ -13,6 +13,7 @@ import schedule
 from datetime import datetime
 from typing import Dict, List, Optional
 import logging
+import tempfile
 
 # Import local modules
 from config import Config
@@ -25,6 +26,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# ElevenLabs Configuration
+ELEVENLABS_API_KEY = os.getenv('elevenlabspaliapi', '')
+ELEVENLABS_VOICE_ID = "pMsXgVXv3BLzUgSXRplE"  # Pali voice ID
+USE_VOICE_NARRATION = os.getenv('USE_VOICE_NARRATION', 'true').lower() == 'true'
 
 class NewsToInstagramPipeline:
     """Main pipeline for fetching news and posting to Instagram"""
@@ -763,7 +769,81 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             logger.error(f"❌ Error downloading/buffering image: {e}")
             return None
     
-    def convert_image_to_video_reel(self, image_path: str, duration: int = 7) -> Optional[str]:
+    def generate_voice_narration(self, headline: str, ai_analysis: str) -> Optional[str]:
+        """
+        Generate voice narration using ElevenLabs Pali voice
+        
+        Args:
+            headline: Article headline
+            ai_analysis: AI-generated analysis
+            
+        Returns:
+            Path to generated audio file or None if failed
+        """
+        if not USE_VOICE_NARRATION:
+            logger.info("ℹ️ Voice narration disabled (set USE_VOICE_NARRATION=true to enable)")
+            return None
+            
+        if not ELEVENLABS_API_KEY:
+            logger.warning("⚠️ ElevenLabs API key not found in environment")
+            return None
+            
+        try:
+            logger.info("🎤 Generating voice narration with ElevenLabs Pali...")
+            
+            # Create narration script: Headline + AI Analysis
+            narration_text = f"{headline}. {ai_analysis}"
+            
+            # Trim if too long (ElevenLabs has character limits)
+            if len(narration_text) > 500:
+                narration_text = narration_text[:497] + "..."
+            
+            logger.info(f"📝 Narration text ({len(narration_text)} chars): {narration_text[:100]}...")
+            
+            # ElevenLabs API endpoint
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{ELEVENLABS_VOICE_ID}"
+            
+            headers = {
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+                "xi-api-key": ELEVENLABS_API_KEY
+            }
+            
+            data = {
+                "text": narration_text,
+                "model_id": "eleven_multilingual_v2",  # Best quality model for Pali voice
+                "voice_settings": {
+                    "stability": 0.50,  # Balanced stability for professional news tone (0.5 = default/optimal for Pali)
+                    "similarity_boost": 1.0,  # Maximum similarity to original Pali voice (use exact voice characteristics)
+                    "style": 0.0,  # No style exaggeration - pure Pali voice as-is
+                    "use_speaker_boost": True  # Enhance clarity and projection for news delivery
+                },
+                "output_format": "mp3_44100_128"  # High quality 44.1kHz, 128kbps
+            }
+            
+            response = requests.post(url, json=data, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                # Save audio to temporary file
+                temp_audio = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
+                temp_audio.write(response.content)
+                temp_audio.close()
+                
+                # Use original audio without modification to preserve Pali's natural voice quality
+                audio_duration = len(response.content) / 16000  # Rough estimate
+                logger.info(f"✅ Voice narration generated with Pali voice: {temp_audio.name} (~{audio_duration:.1f}s)")
+                return temp_audio.name
+            else:
+                logger.error(f"❌ ElevenLabs API error: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Failed to generate voice narration: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
+    def convert_image_to_video_reel(self, image_path: str, duration: int = 7, audio_path: Optional[str] = None) -> Optional[str]:
         """
         Convert static image to video Reel with zoom animation and background music
         
@@ -802,14 +882,36 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Resize to match image dimensions (no distortion)
             video_clip = clip.resized((w, h))
             
-            # Try to add background music if available
+            # Try to add audio (voice narration or background music)
             final_clip = video_clip
-            if USE_AUDIO:
+            
+            # Priority 1: Voice narration (if provided)
+            if audio_path and os.path.exists(audio_path):
                 try:
-                    audio_path = get_audio_path()
-                    if audio_path and os.path.exists(audio_path):
-                        logger.info(f"🎵 Adding background music: {audio_path}")
-                        audio = AudioFileClip(audio_path)
+                    logger.info(f"🎤 Adding voice narration: {audio_path}")
+                    audio = AudioFileClip(audio_path)
+                    
+                    # Adjust video duration to match audio if needed
+                    actual_duration = audio.duration
+                    if actual_duration > duration:
+                        logger.info(f"📏 Extending video duration to {actual_duration:.1f}s to match narration")
+                        video_clip = video_clip.with_duration(actual_duration)
+                    
+                    # Set audio to video
+                    final_clip = video_clip.with_audio(audio)
+                    logger.info(f"✅ Added voice narration ({actual_duration:.1f}s) to Reel")
+                    
+                except Exception as audio_error:
+                    logger.warning(f"⚠️ Could not add voice narration: {audio_error}")
+                    final_clip = video_clip
+            
+            # Priority 2: Background music (if no voice narration and USE_AUDIO enabled)
+            elif USE_AUDIO:
+                try:
+                    bg_audio_path = get_audio_path()
+                    if bg_audio_path and os.path.exists(bg_audio_path):
+                        logger.info(f"🎵 Adding background music: {bg_audio_path}")
+                        audio = AudioFileClip(bg_audio_path)
                         
                         # Loop or trim audio to match video duration
                         if audio.duration < duration:
@@ -830,8 +932,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     logger.warning(f"⚠️ Could not add audio: {audio_error}")
                     final_clip = video_clip
             else:
-                logger.info("ℹ️ Creating silent Reel (set USE_BACKGROUND_AUDIO=true to enable)")
-                logger.info("💡 Recommendation: Post silent Reels and add Instagram trending sounds via app")
+                logger.info("ℹ️ Creating silent Reel (voice narration: disabled, background music: disabled)")
+                logger.info("💡 Set USE_VOICE_NARRATION=true or USE_BACKGROUND_AUDIO=true to add audio")
             
             # Export video
             temp_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
@@ -1104,9 +1206,28 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 # Convert to video if we have the image file
                 if temp_img_path and os.path.exists(temp_img_path):
                     try:
-                        # Convert to video Reel
-                        logger.info("🎬 Converting image to 7s video Reel (static)...")
-                        video_path = self.convert_image_to_video_reel(temp_img_path, duration=7)
+                        # Generate voice narration BEFORE creating video
+                        voice_audio_path = None
+                        if USE_VOICE_NARRATION:
+                            headline = article.get('title', '')
+                            # Generate AI analysis early so we can use it for voice
+                            ai_analysis_text = self.generate_ai_analysis(article)
+                            voice_audio_path = self.generate_voice_narration(headline, ai_analysis_text)
+                        
+                        # Convert to video Reel with voice narration
+                        logger.info("🎬 Converting image to video Reel with voice narration...")
+                        video_path = self.convert_image_to_video_reel(
+                            temp_img_path, 
+                            duration=7,
+                            audio_path=voice_audio_path
+                        )
+                        
+                        # Cleanup voice audio file after video creation
+                        if voice_audio_path and os.path.exists(voice_audio_path):
+                            try:
+                                os.unlink(voice_audio_path)
+                            except:
+                                pass
                         
                         if video_path:
                             logger.info(f"✅ Created video Reel: {video_path} (size: {os.path.getsize(video_path)} bytes)")
