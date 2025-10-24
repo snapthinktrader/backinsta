@@ -14,6 +14,14 @@ env/
 .env.local
 .env.*.local
 
+# Google Cloud credentials
+*.json
+!package.json
+client_secret*.json
+backinsta-gcp-key.json
+credentials.json
+token.pickle
+
 # IDE
 .vscode/
 .idea/

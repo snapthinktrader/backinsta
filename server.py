@@ -17,7 +17,7 @@ import tempfile
 
 # Import local modules
 from config import Config
-from database import BackInstaDB
+from mongo_database import BackInstaDB, generate_article_id
 from youtube_shorts import YouTubeShortsUploader
 
 # Setup logging
@@ -134,7 +134,6 @@ class NewsToInstagramPipeline:
                         title = nyt_article.get('title', '')
                         
                         # Generate article ID to check for duplicates based on title
-                        from database import generate_article_id
                         article_id = generate_article_id(title=title, url=url)
                         
                         # Skip if already posted (check both URL and article ID)
@@ -319,19 +318,19 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             
             original_width, original_height = img.size
             
-            # Convert landscape images to portrait by cropping to 4:5 ratio (Instagram portrait)
+            # Convert landscape images to portrait by cropping to 9:16 ratio (Instagram Reels)
             if original_width > original_height:
                 logger.info(f"🔄 Converting landscape image ({original_width}x{original_height}) to portrait...")
                 
-                # Calculate target dimensions for 4:5 portrait ratio
+                # Calculate target dimensions for 9:16 portrait ratio (Reels)
                 # Keep the height, calculate new width
                 target_height = original_height
-                target_width = int(target_height * 0.8)  # 4:5 ratio
+                target_width = int(target_height * 0.5625)  # 9:16 ratio (9/16 = 0.5625)
                 
                 # If calculated width is larger than original, adjust based on width
                 if target_width > original_width:
                     target_width = original_width
-                    target_height = int(target_width * 1.25)  # 5:4 ratio
+                    target_height = int(target_width * 1.7778)  # 16:9 ratio (16/9 = 1.7778)
                 
                 # Crop from center
                 left = (original_width - target_width) // 2
@@ -341,16 +340,16 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 
                 img = img.crop((left, top, right, bottom))
                 
-                # Upscale to Instagram's recommended portrait size (1080x1350)
-                img = img.resize((1080, 1350), Image.Resampling.LANCZOS)
+                # Upscale to Instagram Reels recommended size (1080x1920)
+                img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
                 width, height = img.size
-                logger.info(f"✅ Cropped and upscaled to portrait: {width}x{height}")
+                logger.info(f"✅ Cropped and upscaled to Reels portrait: {width}x{height}")
             else:
-                # For portrait/square images, just ensure good resolution
+                # For portrait/square images, ensure 9:16 aspect ratio for Reels
                 width, height = img.size
-                if width < 1080 or height < 1350:
+                if width < 1080 or height < 1920:
                     # Upscale maintaining aspect ratio
-                    scale = max(1080/width, 1350/height)
+                    scale = max(1080/width, 1920/height)
                     new_width = int(width * scale)
                     new_height = int(height * scale)
                     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
@@ -1123,7 +1122,6 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         try:
             # ✅ SAFETY CHECK: Ensure article_id is present
             if 'article_id' not in article:
-                from database import generate_article_id
                 article['article_id'] = generate_article_id(
                     title=article.get('title', ''),
                     url=article.get('url', '')
