@@ -634,6 +634,39 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             logger.error(traceback.format_exc())
             return None
     
+    def upload_video(self, video_bytes: bytes) -> Optional[str]:
+        """Upload video to Catbox (free, supports videos up to 200MB)"""
+        try:
+            logger.info(f"📤 Uploading video to Catbox (size: {len(video_bytes)} bytes)...")
+            
+            files = {'fileToUpload': ('video.mp4', video_bytes, 'video/mp4')}
+            data = {'reqtype': 'fileupload'}
+            
+            response = requests.post(
+                'https://catbox.moe/user/api.php',
+                files=files,
+                data=data,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logger.info(f"✅ Uploaded video to Catbox: {url}")
+                    return url
+                else:
+                    logger.error(f"❌ Catbox returned unexpected response: {url}")
+                    return None
+            else:
+                logger.error(f"❌ Catbox upload failed (HTTP {response.status_code}): {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"❌ Video upload exception: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+    
     def get_article_image_url(self, article: Dict) -> Optional[str]:
         """
         Extract image URL from article multimedia
@@ -903,9 +936,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 logger.error("❌ Could not create media object after retries")
                 return {'success': False, 'error': 'Failed to create media object after retries'}
 
-            # Wait for Instagram to process the image
-            logger.info("⏳ Waiting 10 seconds for Instagram to process the image...")
-            time.sleep(10)
+            # Wait for Instagram to process the media (videos need more time)
+            wait_time = 30 if is_video else 10
+            logger.info(f"⏳ Waiting {wait_time} seconds for Instagram to process the {'video' if is_video else 'image'}...")
+            time.sleep(wait_time)
 
             # Publish media (single attempt only to avoid duplicates)
             try:
@@ -1028,9 +1062,9 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                         
                         if video_path:
                             logger.info(f"✅ Created video Reel: {video_path} (size: {os.path.getsize(video_path)} bytes)")
-                            # Upload video to hosting service
+                            # Upload video to Catbox (video hosting service)
                             with open(video_path, 'rb') as vf:
-                                video_url = self.upload_image(vf.read())  # imgbb supports videos
+                                video_url = self.upload_video(vf.read())
                                 
                             if video_url:
                                 logger.info(f"✅ Reel created and uploaded: {video_url}")
@@ -1063,8 +1097,11 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             # Extract AI analysis for YouTube (it's the first part of the caption before hashtags)
             ai_analysis = self.generate_ai_analysis(article)
             
-            # Post with processed image (don't retry with original to avoid duplicates)
-            final_image_url = processed_image_url if processed_image_url else image_url
+            # Use final_image_url (could be video or image) for posting
+            # Don't overwrite it - it was already set correctly above
+            if not final_image_url:
+                final_image_url = processed_image_url if processed_image_url else image_url
+            
             result = self.post_to_instagram_direct(final_image_url, caption)
             
             instagram_success = result['success']
