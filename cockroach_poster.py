@@ -58,45 +58,83 @@ class CockroachDBPoster:
             dict: Result with success status and post_id or error
         """
         try:
-            logger.info("📤 Posting to Instagram via tmpfiles.org...")
+            logger.info("📤 Posting to Instagram with fallback hosting...")
             
             video_size = len(video_data)
             logger.info(f"📁 Video size: {video_size / (1024*1024):.2f} MB")
-            
-            # Step 1: Upload video to tmpfiles.org
-            logger.info("📤 Uploading video to tmpfiles.org...")
             
             # Create temp file for upload
             temp_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
             temp_video.write(video_data)
             temp_video.close()
             
+            video_url = None
+            
+            # Try multiple hosting services with fallback
+            hosting_services = [
+                {
+                    'name': 'tmpfiles.org',
+                    'url': 'https://tmpfiles.org/api/v1/upload',
+                    'timeout': 120,
+                    'parser': lambda r: r.json()['data']['url'].replace('tmpfiles.org/', 'tmpfiles.org/dl/')
+                },
+                {
+                    'name': 'file.io',
+                    'url': 'https://file.io',
+                    'timeout': 120,
+                    'parser': lambda r: r.json()['link']
+                },
+                {
+                    'name': 'uguu.se',
+                    'url': 'https://uguu.se/upload.php',
+                    'timeout': 120,
+                    'parser': lambda r: r.json()['files'][0]['url'] if 'files' in r.json() else r.text.strip()
+                }
+            ]
+            
             try:
-                with open(temp_video.name, 'rb') as f:
-                    files = {'file': ('reel.mp4', f, 'video/mp4')}
-                    upload_response = requests.post(
-                        'https://tmpfiles.org/api/v1/upload',
-                        files=files,
-                        timeout=120
-                    )
+                for service in hosting_services:
+                    try:
+                        logger.info(f"📤 Trying {service['name']}...")
+                        
+                        with open(temp_video.name, 'rb') as f:
+                            files = {'file': ('reel.mp4', f, 'video/mp4')}
+                            upload_response = requests.post(
+                                service['url'],
+                                files=files,
+                                timeout=service['timeout']
+                            )
+                        
+                        if upload_response.status_code == 200:
+                            # Check if response is JSON (not HTML error page)
+                            content_type = upload_response.headers.get('Content-Type', '')
+                            if 'application/json' in content_type or upload_response.text.startswith('{'):
+                                try:
+                                    video_url = service['parser'](upload_response)
+                                    logger.info(f"✅ Video uploaded to {service['name']}: {video_url}")
+                                    break
+                                except (KeyError, ValueError, IndexError) as e:
+                                    logger.warning(f"⚠️ {service['name']} response parse error: {e}")
+                                    continue
+                            else:
+                                logger.warning(f"⚠️ {service['name']} returned HTML error page, trying next service...")
+                                continue
+                        else:
+                            logger.warning(f"⚠️ {service['name']} failed with status {upload_response.status_code}")
+                            continue
+                            
+                    except requests.exceptions.Timeout:
+                        logger.warning(f"⚠️ {service['name']} timeout, trying next service...")
+                        continue
+                    except Exception as e:
+                        logger.warning(f"⚠️ {service['name']} error: {e}, trying next service...")
+                        continue
                 
-                if upload_response.status_code != 200:
-                    logger.error(f"❌ tmpfiles upload failed: {upload_response.text}")
+                if not video_url:
+                    logger.error("❌ All video hosting services failed")
                     os.unlink(temp_video.name)
-                    return {"success": False, "error": f"tmpfiles upload failed: {upload_response.text}"}
-                
-                result = upload_response.json()
-                if result.get('status') != 'success':
-                    logger.error(f"❌ tmpfiles upload error: {result}")
-                    os.unlink(temp_video.name)
-                    return {"success": False, "error": f"tmpfiles error: {result}"}
-                
-                # tmpfiles.org returns URL like "https://tmpfiles.org/123456"
-                # We need to convert to direct download URL: "https://tmpfiles.org/dl/123456"
-                tmpfiles_url = result['data']['url']
-                video_url = tmpfiles_url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
-                logger.info(f"✅ Video uploaded to tmpfiles: {video_url}")
-                
+                    return {"success": False, "error": "All video hosting services failed"}
+                    
             finally:
                 # Cleanup temp file
                 if os.path.exists(temp_video.name):
