@@ -122,9 +122,43 @@ class CockroachDBPoster:
             media_id = create_response.json().get("id")
             logger.info(f"✅ Media container created: {media_id}")
             
-            # Step 3: Wait for Instagram to process the video
-            logger.info("⏳ Waiting for Instagram to process video (30s)...")
-            time.sleep(30)
+            # Step 3: Check if media is ready (smart polling instead of fixed wait)
+            logger.info("⏳ Checking if media is ready for publishing...")
+            max_attempts = 24  # 24 attempts * 5 seconds = 2 minutes max
+            for attempt in range(1, max_attempts + 1):
+                # Check media status
+                status_url = f"https://graph.facebook.com/v21.0/{media_id}"
+                status_params = {
+                    "fields": "status_code,status",
+                    "access_token": ACCESS_TOKEN
+                }
+                
+                status_response = requests.get(status_url, params=status_params, timeout=30)
+                
+                if status_response.status_code == 200:
+                    status_data = status_response.json()
+                    status_code = status_data.get("status_code")
+                    
+                    # Status codes:
+                    # FINISHED = ready to publish
+                    # IN_PROGRESS = still processing
+                    # ERROR = processing failed
+                    if status_code == "FINISHED":
+                        logger.info(f"✅ Media ready after {attempt * 5}s")
+                        break
+                    elif status_code == "ERROR":
+                        logger.error(f"❌ Media processing failed: {status_data}")
+                        return {"success": False, "error": f"Media processing error: {status_data}"}
+                    else:
+                        logger.info(f"⏳ Attempt {attempt}/{max_attempts}: Status = {status_code}, waiting 5s...")
+                        time.sleep(5)
+                else:
+                    # If we can't check status, fall back to waiting
+                    logger.warning(f"⚠️ Can't check status (attempt {attempt}), waiting 5s...")
+                    time.sleep(5)
+            else:
+                # Max attempts reached
+                logger.warning(f"⚠️ Media not ready after {max_attempts * 5}s, attempting to publish anyway...")
             
             # Step 4: Publish the media
             publish_url = f"https://graph.facebook.com/v21.0/{INSTAGRAM_BUSINESS_ACCOUNT_ID}/media_publish"
