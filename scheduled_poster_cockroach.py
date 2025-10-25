@@ -9,6 +9,7 @@ import sys
 import time
 from datetime import datetime
 import logging
+import requests
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -57,6 +58,37 @@ def post_next_reel():
         import traceback
         traceback.print_exc()
         return False
+
+def keep_alive_during_sleep(sleep_duration, ping_interval=720):
+    """
+    Keep Render service alive during sleep by pinging health endpoint
+    
+    Args:
+        sleep_duration: Total time to sleep in seconds
+        ping_interval: Time between pings in seconds (default 12 minutes = 720s)
+    """
+    # Get the service URL from environment (Render provides this)
+    service_url = os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:10000')
+    health_url = f"{service_url}/health"
+    
+    elapsed = 0
+    while elapsed < sleep_duration:
+        # Calculate how long to sleep this iteration
+        sleep_time = min(ping_interval, sleep_duration - elapsed)
+        time.sleep(sleep_time)
+        elapsed += sleep_time
+        
+        # Ping health endpoint if we're not done sleeping
+        if elapsed < sleep_duration:
+            try:
+                response = requests.get(health_url, timeout=10)
+                if response.status_code == 200:
+                    logger.info(f"💓 Keep-alive ping successful ({elapsed}/{sleep_duration}s)")
+                else:
+                    logger.warning(f"⚠️ Keep-alive ping returned {response.status_code}")
+            except Exception as e:
+                logger.warning(f"⚠️ Keep-alive ping failed: {e}")
+
 
 def main():
     """Main scheduling loop"""
@@ -138,8 +170,8 @@ def main():
             logger.info(f"⏰ Next post scheduled for: {next_post_datetime.strftime('%H:%M:%S')}")
             logger.info(f"💤 Sleeping for {wait_display}...\n")
             
-            # Sleep until next cycle
-            time.sleep(POST_INTERVAL)
+            # Sleep with keep-alive pings (every 12 minutes)
+            keep_alive_during_sleep(POST_INTERVAL, ping_interval=720)
             
         except KeyboardInterrupt:
             logger.info("\n\n⚠️ Received interrupt signal")
