@@ -207,6 +207,7 @@ def insert_reel(headline, caption, article_url, article_id, video_data,
 def get_pending_reel():
     """
     Get the oldest pending reel from database
+    Reassembles chunked video data if stored in reel_chunks table
     
     Returns:
         dict: Reel data or None if no pending reels
@@ -224,14 +225,43 @@ def get_pending_reel():
         """)
         
         reel = cursor.fetchone()
-        cursor.close()
         
         if reel:
             # Convert to dict and handle binary data
             reel_dict = dict(reel)
-            if reel_dict.get('video_data'):
+            reel_id = reel_dict['id']
+            
+            # Check if video_data is NULL (meaning it's chunked)
+            if not reel_dict.get('video_data'):
+                print(f"📦 Reassembling chunks for reel {reel_id}...")
+                
+                # Fetch chunks in order
+                cursor.execute("""
+                    SELECT chunk_data
+                    FROM reel_chunks
+                    WHERE reel_id = %s
+                    ORDER BY chunk_number ASC
+                """, (reel_id,))
+                
+                chunks = cursor.fetchall()
+                
+                if chunks:
+                    # Reassemble video from chunks
+                    video_data = b''.join(bytes(chunk['chunk_data']) for chunk in chunks)
+                    reel_dict['video_data'] = video_data
+                    print(f"✅ Reassembled {len(chunks)} chunks into {len(video_data)/(1024*1024):.2f} MB")
+                else:
+                    print(f"⚠️  No chunks found for reel {reel_id}")
+                    cursor.close()
+                    return None
+            else:
+                # Video data is stored directly in reels table
                 reel_dict['video_data'] = bytes(reel_dict['video_data'])
+            
+            cursor.close()
             return reel_dict
+        
+        cursor.close()
         return None
         
     except Exception as e:
