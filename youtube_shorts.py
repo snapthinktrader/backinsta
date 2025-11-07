@@ -46,67 +46,132 @@ class YouTubeShortsUploader:
             self._authenticate()
     
     def _authenticate(self):
-        """Authenticate with YouTube API"""
+        """Authenticate with YouTube API - handles token refresh automatically"""
         creds = None
+        needs_new_token = False
         
         # Check for base64-encoded credentials from environment (for Render deployment)
         credentials_base64 = os.getenv('YOUTUBE_CREDENTIALS_BASE64')
         token_base64 = os.getenv('YOUTUBE_TOKEN_BASE64')
         
         # Decode and save credentials if provided via environment
-        if credentials_base64 and not os.path.exists(self.credentials_file):
+        if credentials_base64:
             try:
-                logger.info("📦 Decoding YouTube credentials from environment variable...")
-                credentials_json = base64.b64decode(credentials_base64).decode('utf-8')
-                with open(self.credentials_file, 'w') as f:
-                    f.write(credentials_json)
-                logger.info("✅ YouTube credentials file created from environment")
+                if not os.path.exists(self.credentials_file):
+                    logger.info("📦 Decoding YouTube credentials from environment variable...")
+                    credentials_json = base64.b64decode(credentials_base64).decode('utf-8')
+                    with open(self.credentials_file, 'w') as f:
+                        f.write(credentials_json)
+                    logger.info("✅ YouTube credentials file created from environment")
             except Exception as e:
                 logger.error(f"❌ Failed to decode YouTube credentials: {e}")
         
-        # Decode and save token if provided via environment
-        if token_base64 and not os.path.exists(self.token_file):
+        # Always reload token from environment if available (keeps it fresh)
+        if token_base64:
             try:
-                logger.info("📦 Decoding YouTube token from environment variable...")
+                logger.info("📦 Loading YouTube token from environment variable...")
                 token_data = base64.b64decode(token_base64)
                 with open(self.token_file, 'wb') as f:
                     f.write(token_data)
-                logger.info("✅ YouTube token file created from environment")
+                logger.info("✅ YouTube token loaded from environment")
             except Exception as e:
                 logger.error(f"❌ Failed to decode YouTube token: {e}")
+                needs_new_token = True
         
-        # Load token if exists
-        if os.path.exists(self.token_file):
-            with open(self.token_file, 'rb') as token:
-                creds = pickle.load(token)
+        # Load token if exists and not corrupted
+        if os.path.exists(self.token_file) and not needs_new_token:
+            try:
+                with open(self.token_file, 'rb') as token:
+                    creds = pickle.load(token)
+                logger.info("📂 Loaded existing YouTube token")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to load token file: {e}")
+                needs_new_token = True
+                creds = None
         
-        # If no valid credentials, authenticate
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                logger.info("🔄 Refreshing YouTube API token...")
-                creds.refresh(Request())
-            else:
-                if not os.path.exists(self.credentials_file):
-                    logger.error(f"❌ YouTube credentials file not found: {self.credentials_file}")
-                    logger.info("💡 To enable YouTube Shorts:")
-                    logger.info("   1. Go to https://console.cloud.google.com/")
-                    logger.info("   2. Create a project and enable YouTube Data API v3")
-                    logger.info("   3. Create OAuth 2.0 credentials (Desktop app)")
-                    logger.info("   4. Download as 'youtube_credentials.json'")
-                    return
+        # Validate and refresh credentials automatically
+        if creds and not needs_new_token:
+            try:
+                # Check if token is valid
+                if not creds.valid:
+                    if creds.expired and creds.refresh_token:
+                        logger.info("🔄 Token expired, refreshing automatically...")
+                        creds.refresh(Request())
+                        logger.info("✅ Token refreshed successfully")
+                        # Save the refreshed token
+                        with open(self.token_file, 'wb') as token:
+                            pickle.dump(creds, token)
+                        logger.info("💾 Refreshed token saved")
+                    else:
+                        logger.warning("⚠️ Token invalid and cannot be refreshed")
+                        needs_new_token = True
+                        creds = None
+                else:
+                    logger.info("✅ YouTube token is valid")
+            except Exception as refresh_error:
+                # Token refresh failed (revoked, expired, or network issue)
+                error_msg = str(refresh_error)
+                if 'invalid_grant' in error_msg.lower():
+                    logger.warning(f"⚠️ Token has been revoked or expired: {refresh_error}")
+                    logger.info("🔄 Token needs re-authentication (likely revoked by user or expired)")
+                else:
+                    logger.warning(f"⚠️ Token refresh failed: {refresh_error}")
                 
-                logger.info("🔐 Authenticating with YouTube API...")
+                # Delete the invalid token
+                if os.path.exists(self.token_file):
+                    os.remove(self.token_file)
+                    logger.info("🗑️ Removed invalid token file")
+                
+                needs_new_token = True
+                creds = None
+        
+        # If credentials still not valid, need to authenticate
+        if not creds or needs_new_token:
+            if not os.path.exists(self.credentials_file):
+                logger.error(f"❌ YouTube credentials file not found: {self.credentials_file}")
+                logger.info("💡 To enable YouTube Shorts:")
+                logger.info("   1. Go to https://console.cloud.google.com/")
+                logger.info("   2. Create a project and enable YouTube Data API v3")
+                logger.info("   3. Create OAuth 2.0 credentials (Desktop app)")
+                logger.info("   4. Download as 'youtube_credentials.json'")
+                logger.info("   5. Run: python3 regenerate_youtube_token.py")
+                return
+            
+            logger.info("🔐 Starting OAuth authentication flow...")
+            logger.info("📝 A browser window will open for authorization")
+            try:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_file, SCOPES)
                 creds = flow.run_local_server(port=0)
+                logger.info("✅ Authentication successful")
+            except Exception as auth_error:
+                logger.error(f"❌ Authentication failed: {auth_error}")
+                return
             
             # Save token for future use
-            with open(self.token_file, 'wb') as token:
-                pickle.dump(creds, token)
+            try:
+                with open(self.token_file, 'wb') as token:
+                    pickle.dump(creds, token)
+                logger.info("💾 New token saved successfully")
+                
+                # If in environment mode, remind to update env vars
+                if os.getenv('YOUTUBE_TOKEN_BASE64'):
+                    logger.warning("⚠️ IMPORTANT: Update your YOUTUBE_TOKEN_BASE64 environment variable!")
+                    logger.info("   Run: ./encode_youtube_token.sh")
+            except Exception as save_error:
+                logger.error(f"❌ Failed to save token: {save_error}")
         
         # Build YouTube API client
-        self.youtube = build('youtube', 'v3', credentials=creds)
-        logger.info("✅ YouTube API authenticated")
+        if creds:
+            try:
+                self.youtube = build('youtube', 'v3', credentials=creds)
+                logger.info("✅ YouTube API client ready")
+            except Exception as e:
+                logger.error(f"❌ Failed to build YouTube API client: {e}")
+                self.youtube = None
+        else:
+            logger.error("❌ No valid credentials available")
+            self.youtube = None
     
     def upload_short(self, video_path: str, title: str, description: str = "", 
                      tags: list = None, category_id: str = "25") -> Optional[Dict]:

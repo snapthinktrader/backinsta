@@ -1,0 +1,149 @@
+2025-10-27 13:12:09,749 - INFO - ✅ MongoDB connection successful
+2025-10-27 13:12:10,038 - INFO - ✅ Database indexes created
+2025-10-27 13:12:10,041 - INFO - 🔄 Refreshing YouTube API token...
+2025-10-27 13:12:10,494 - INFO - file_cache is only supported with oauth2client<4.0.0
+2025-10-27 13:12:10,499 - INFO - ✅ YouTube API authenticated
+2025-10-27 13:12:10,499 - INFO - ✅ YouTube Shorts uploader initialized
+2025-10-27 13:12:11,483 - INFO - ✅ Connected to Webstory MongoDB
+2025-10-27 13:12:11,483 - INFO - 🔧 Using Application Default Credentials (gcloud)...
+2025-10-27 13:12:13,490 - INFO - ✅ Google TTS client initialized
+2025-10-27 13:12:13,491 - INFO - 📰 Fetching 1 FRESH articles from NYT API for section: business
+2025-10-27 13:12:13,491 - INFO - � Fetching from NYT API: business
+2025-10-27 13:12:16,221 - INFO - 📋 Found 95 already posted articles in database
+2025-10-27 13:12:16,221 - INFO - ✅ Fetched 1 FRESH articles from NYT API
+2025-10-27 13:12:16,221 - INFO - 📊 Found 1 new articles to process
+2025-10-27 13:12:17,552 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2025-10-27 13:12:17,569 - INFO - ✅ Generated AI analysis: Japan's newfound economic reality is a sobering reminder that playing nice with Trump comes with a h...
+2025-10-27 13:12:17,571 - INFO - 🎤 Generating voice with Google TTS (en-US-Studio-O)...
+2025-10-27 13:12:20,819 - INFO - ✅ Voice generated: 177.0 KB
+2025-10-27 13:12:21,149 - INFO - 🎬 Creating animated reel with NYT image + stock footage...
+2025-10-27 13:12:21,150 - INFO - 📰 Downloading NYT article image from: https://static01.nyt.com/images/2025/10/27/multimedia/27Biz-...
+2025-10-27 13:12:21,471 - INFO -    Response status: 200
+2025-10-27 13:12:21,472 - INFO -    Saved to: /var/folders/kk/fkqjq71d3p93wt840kkmf_680000gn/T/tmp8e9o7yez.jpg
+2025-10-27 13:12:21,563 - INFO - ✅ Created NYT image clip: 3.3s, size=(1080, 1920)
+2025-10-27 13:12:22,249 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+2025-10-27 13:12:22,251 - INFO - 🔑 AI-extracted search terms: Based on the news article, here are 5 specific visual search terms for finding relevant NEWS-RELATED stock videos/photos:
+
+Government building, trade negotiation conference table, stock market trading floor, highway construction crane equipment
+2025-10-27 13:12:22,251 - INFO - 🔍 Searching Pexels for videos: 'Based on the news article'
+2025-10-27 13:12:24,100 - INFO - ✅ Found 3 videos on Pexels
+2025-10-27 13:12:24,102 - INFO - 🔍 Searching Pexels for videos: 'here are 5 specific visual search terms for finding relevant NEWS-RELATED stock videos/photos:
+
+Government building'
+2025-10-27 13:12:25,416 - ERROR - ❌ Pexels API error: 400
+2025-10-27 13:12:25,416 - ERROR - Response: {"status":400,"code":"Invalid query"}
+2025-10-27 13:12:25,416 - ERROR - Headers sent: {'Authorization': 'P2hZCfBfgJ5ZzPuLqve2ngtUNJQtxGgjzQPrk5qTZgHKyO541tPMUT7D'}
+2025-10-27 13:12:25,418 - INFO - 🔍 Searching Pexels for videos: 'trade negotiation conference table'
+2025-10-27 13:12:26,965 - INFO - ✅ Found 3 videos on Pexels
+2025-10-27 13:12:26,967 - INFO - 🔍 Searching Pexels for videos: 'stock market trading floor'
+2025-10-27 13:12:29,422 - INFO - ✅ Found 3 videos on Pexels
+2025-10-27 13:12:29,424 - INFO - ✅ Found 6 media clips:
+2025-10-27 13:12:29,424 - INFO -    - Videos: 6
+2025-10-27 13:12:29,424 - INFO -    - Photos (Pexels): 0
+2025-10-27 13:12:29,424 - INFO -    - Photos (Google): 0
+2025-10-27 13:12:29,424 - INFO - ⏱️  Individual clip duration: 3.1s for dynamic transitions
+2025-10-27 13:12:29,424 - INFO - 📥 Downloading video from Pexels...
+2025-10-27 13:12:30,222 - INFO - ✅ Downloaded video: 0.97 MB
+2025-10-27 13:12:30,586 - INFO - ✅ Added video clip 1: 3.1s
+2025-10-27 13:12:30,586 - INFO - 📥 Downloading video from Pexels...
+2025-10-27 13:12:31,121 - INFO - ✅ Downloaded video: 0.30 MB
+2025-10-27 13:12:31,444 - INFO - ✅ Added video clip 2: 3.1s
+2025-10-27 13:12:31,445 - INFO - 📥 Downloading video from Pexels...
+2025-10-27 13:12:31,957 - INFO - ✅ Downloaded video: 0.56 MB
+2025-10-27 13:12:32,354 - INFO - ✅ Added video clip 3: 3.1s
+2025-10-27 13:12:32,354 - INFO - 📥 Downloading video from Pexels...
+2025-10-27 13:12:39,187 - INFO - ✅ Downloaded video: 22.10 MB
+2025-10-27 13:12:40,642 - INFO - ✅ Added video clip 4: 3.1s
+2025-10-27 13:12:40,643 - INFO - 📥 Downloading video from Pexels...
+2025-10-27 13:12:44,594 - INFO - ✅ Downloaded video: 11.20 MB
+2025-10-27 13:12:45,751 - INFO - ✅ Added video clip 5: 3.1s
+2025-10-27 13:12:45,751 - INFO - 📥 Downloading video from Pexels...
+2025-10-27 13:12:46,335 - INFO - ✅ Downloaded video: 0.54 MB
+2025-10-27 13:12:46,703 - INFO - ✅ Added video clip 6: 3.1s
+2025-10-27 13:12:46,703 - INFO - ✅ NYT article image INSERTED as clip #1 (total clips: 7)
+2025-10-27 13:12:46,703 - INFO - 🎬 Concatenating 7 clips...
+2025-10-27 13:12:46,703 - INFO -    Clip order: NYT image → stock footage (6 clips)
+2025-10-27 13:12:46,975 - INFO - 📝 Adding headline text overlay throughout video...
+2025-10-27 13:12:47,513 - INFO - ✅ Added headline overlay (PIL-based): Japan Deals With the Price of Playing to Trump: $5...
+2025-10-27 13:12:47,514 - INFO - 👩‍💼 Adding professional news anchor overlay...
+2025-10-27 13:12:47,667 - INFO - ✅ Added anchor: Rachel Anderson - Senior News Reporter, Forexyy Newsroom
+2025-10-27 13:12:47,667 - INFO - 🎤 Adding voice narration...
+2025-10-27 13:12:47,935 - INFO - 📏 Extending video to 22.7s to match narration
+2025-10-27 13:12:47,936 - INFO - ✅ Added voice narration (22.7s)
+2025-10-27 13:12:47,936 - INFO - 📝 Generating synced captions from audio...
+2025-10-27 13:12:47,936 - INFO -    Video before captions: duration=22.66s, size=(1080, 1920)
+2025-10-27 13:12:47,994 - INFO - 🎤 Transcribing audio for synced captions...
+2025-10-27 13:12:49,289 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/audio/transcriptions "HTTP/1.1 200 OK"
+2025-10-27 13:12:49,297 - INFO - 🎤 Transcription response type: <class 'groq.types.audio.transcription.Transcription'>
+2025-10-27 13:12:49,297 - INFO - 🎤 Has 'words' attribute: True
+2025-10-27 13:12:49,297 - INFO - 🎤 Words count: 58
+2025-10-27 13:12:49,297 - INFO - ✅ Transcribed 58 words with timestamps
+2025-10-27 13:12:49,297 - INFO -    Sample first word: {'word': '{\'word\': "Japan\'s", \'start\': 0, \'end\': 0.6}', 'start': 0, 'end': 0}
+2025-10-27 13:12:49,297 - INFO - 📐 Video dimensions: 1080x1920
+2025-10-27 13:12:49,298 - INFO - 🎨 Creating 58 caption clips...
+2025-10-27 13:12:52,329 - INFO -    Created 10 caption clips...
+2025-10-27 13:12:55,479 - INFO -    Created 20 caption clips...
+2025-10-27 13:12:58,664 - INFO -    Created 30 caption clips...
+2025-10-27 13:13:02,393 - INFO -    Created 40 caption clips...
+2025-10-27 13:13:05,594 - INFO -    Created 50 caption clips...
+2025-10-27 13:13:08,237 - INFO - 🎨 Total caption clips created: 58
+2025-10-27 13:13:08,237 - INFO - 🎬 Compositing video: base + 58 captions
+2025-10-27 13:13:08,237 - INFO -    Base video duration: 22.66s
+2025-10-27 13:13:08,312 - INFO - ✅ Composite complete! Final duration: 22.66s
+2025-10-27 13:13:08,313 - INFO -    Video after captions: duration=22.66s
+2025-10-27 13:13:08,313 - INFO - 💾 Exporting animated reel...
+2025-10-27 13:25:25,028 - INFO - ✅ Created animated reel: 13.89 MB
+
+============================================================
+🎬 TESTING COMPLETE ANIMATED REEL LOCALLY
+============================================================
+
+🔧 Initializing components...
+
+📰 Fetching latest article from NYT...
+✅ Article: Japan Deals With the Price of Playing to Trump: $550 Billion...
+   URL: https://www.nytimes.com/2025/10/26/business/japan-investment-trump-tariffs.html...
+
+🤖 Generating AI analysis...
+✅ Analysis: Japan's newfound economic reality is a sobering reminder that playing nice with Trump comes with a h...
+
+🎤 Generating voice narration...
+✅ Voice generated: 177.0 KB
+
+📥 Getting NYT article image...
+✅ NYT image: https://static01.nyt.com/images/2025/10/27/multimedia/27Biz-...
+
+⏱️  Calculating target duration...
+✅ Target duration: 22s
+
+🎬 Creating COMPLETE animated reel...
+   Features to include:
+   ✓ NYT article image (first clip, 4s)
+   ✓ Stock footage (6+ clips, 3-4s each for dynamic transitions)
+   ✓ Headline text overlay
+   ✓ Rachel Anderson anchor overlay
+   ✓ Voice narration
+   ✓ Synced captions
+
+✅ Added anchor overlay: Rachel Anderson
+
+============================================================
+✅ SUCCESS! Complete animated reel created!
+============================================================
+📺 Video: /Users/mahendrabahubali/Desktop/complete_animated_reel_test.mp4
+📊 Size: 13.89 MB
+⏱️  Duration: ~22s
+
+📋 Features included:
+   ✓ NYT article image with text overlay (4s)
+   ✓ Stock footage clips (6+ clips, 3-4s each)
+   ✓ Headline text overlay (throughout)
+   ✓ Rachel Anderson anchor overlay (left side, below headline)
+   ✓ Voice narration (Google TTS)
+   ✓ Synced captions (if available)
+   ✓ Fast-paced, dynamic transitions
+
+🎬 Opening video...
+
+✅ Test completed successfully!
+👉 Review the video, then we can integrate with CockroachDB
