@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.cockroach_setup import get_pending_reel, mark_reel_posted, mark_reel_failed, get_stats
+from database.mongodb_setup import get_pending_reel, mark_reel_posted, mark_reel_failed, get_stats
 
 # Load environment
 load_dotenv()

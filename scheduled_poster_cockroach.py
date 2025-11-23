@@ -15,7 +15,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Import from same directory
 from cockroach_poster import CockroachDBPoster
-from database.cockroach_setup import get_stats
+from database.mongodb_setup import get_stats
 
 # Setup logging
 logging.basicConfig(
