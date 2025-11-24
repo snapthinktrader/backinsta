@@ -360,6 +360,90 @@ def get_stats():
         if client:
             client.close()
 
+def check_and_cleanup_if_needed():
+    """
+    Check MongoDB storage usage and auto-cleanup if >89% full
+    Returns: True if cleanup was performed, False otherwise
+    """
+    try:
+        client = get_connection()
+        db = client['qpost']
+        
+        # Get database stats
+        db_stats = db.command('dbstats')
+        storage_size_mb = db_stats['storageSize'] / (1024 * 1024)
+        
+        # Free tier limit
+        FREE_TIER_LIMIT_MB = 512
+        CLEANUP_THRESHOLD = 0.89  # 89%
+        
+        usage_percentage = storage_size_mb / FREE_TIER_LIMIT_MB
+        
+        if usage_percentage >= CLEANUP_THRESHOLD:
+            print(f"\n⚠️  Storage at {usage_percentage*100:.1f}% ({storage_size_mb:.2f} MB / {FREE_TIER_LIMIT_MB} MB)")
+            print(f"🧹 Running auto-cleanup...")
+            
+            # Clean posted reels
+            cleaned_count = 0
+            space_freed_mb = 0
+            
+            posted_reels = list(db.reels.find({
+                'status': 'posted',
+                'video_data': {'$exists': True, '$ne': None}
+            }))
+            
+            for reel in posted_reels:
+                if reel.get('video_data'):
+                    size_mb = len(reel['video_data']) / (1024 * 1024)
+                    space_freed_mb += size_mb
+                
+                db.reels.update_one(
+                    {'_id': reel['_id']},
+                    {
+                        '$unset': {'video_data': ''},
+                        '$set': {'cleaned_at': datetime.now()}
+                    }
+                )
+                cleaned_count += 1
+            
+            # Clean GridFS files
+            fs = gridfs.GridFS(db)
+            posted_with_gridfs = list(db.reels.find({
+                'status': 'posted',
+                'gridfs_file_id': {'$exists': True, '$ne': None}
+            }))
+            
+            for reel in posted_with_gridfs:
+                try:
+                    gridfs_file_id = reel['gridfs_file_id']
+                    gridfs_file = fs.get(gridfs_file_id)
+                    size_mb = gridfs_file.length / (1024 * 1024)
+                    space_freed_mb += size_mb
+                    
+                    fs.delete(gridfs_file_id)
+                    db.reels.update_one(
+                        {'_id': reel['_id']},
+                        {
+                            '$unset': {'gridfs_file_id': ''},
+                            '$set': {'cleaned_at': datetime.now()}
+                        }
+                    )
+                    cleaned_count += 1
+                except Exception as e:
+                    print(f"   ⚠️  Failed to clean GridFS file: {e}")
+            
+            print(f"✅ Auto-cleanup complete: {cleaned_count} reels cleaned, ~{space_freed_mb:.2f} MB freed")
+            
+            client.close()
+            return True
+        
+        client.close()
+        return False
+        
+    except Exception as e:
+        print(f"❌ Auto-cleanup failed: {e}")
+        return False
+
 if __name__ == "__main__":
     print("=" * 60)
     print("🗄️  MongoDB Setup for Instagram Reels")

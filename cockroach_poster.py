@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.mongodb_setup import get_pending_reel, mark_reel_posted, mark_reel_failed, get_stats
+from database.mongodb_setup import get_pending_reel, mark_reel_posted, mark_reel_failed, get_stats, check_and_cleanup_if_needed
 
 # Load environment
 load_dotenv()
@@ -336,6 +336,10 @@ class CockroachDBPoster:
                     logger.info(f"   ✅ YouTube: {youtube_video_id}")
                 else:
                     logger.warning(f"   ⚠️  YouTube: {youtube_result.get('error', 'Failed')}")
+                
+                # Auto-cleanup check after successful post
+                logger.info("🔍 Checking storage usage...")
+                check_and_cleanup_if_needed()
                 
                 return True
             else:
