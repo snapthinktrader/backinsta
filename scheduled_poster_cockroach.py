@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 # Simple health check handler for Render
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/health' or self.path == '/':
+        # Match /, /health, /health1, /health2, /health3, /health4, /health5 (with or without trailing slash)
+        path = self.path.rstrip('/')
+        if path in ['', '/health', '/health1', '/health2', '/health3', '/health4', '/health5']:
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
@@ -61,7 +63,7 @@ def post_next_reel():
 
 def keep_alive_during_sleep(sleep_duration, ping_interval=720):
     """
-    Keep Render service alive during sleep by pinging health endpoint
+    Keep Render service alive during sleep by pinging health endpoints
     
     Args:
         sleep_duration: Total time to sleep in seconds
@@ -69,9 +71,12 @@ def keep_alive_during_sleep(sleep_duration, ping_interval=720):
     """
     # Get the service URL from environment (Render provides this)
     service_url = os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:10000')
-    health_url = f"{service_url}/health"
+    
+    # Try different endpoints as fallbacks
+    endpoints = ["/health", "/health1", "/health2", "/health3", "/health4"]
     
     elapsed = 0
+    endpoint_idx = 0
     while elapsed < sleep_duration:
         # Calculate how long to sleep this iteration
         sleep_time = min(ping_interval, sleep_duration - elapsed)
@@ -80,14 +85,20 @@ def keep_alive_during_sleep(sleep_duration, ping_interval=720):
         
         # Ping health endpoint if we're not done sleeping
         if elapsed < sleep_duration:
+            # Rotate endpoints to avoid hitting the same blocked/cached path
+            endpoint = endpoints[endpoint_idx % len(endpoints)]
+            endpoint_idx += 1
+            health_url = f"{service_url.rstrip('/')}{endpoint}"
+            
             try:
+                logger.info(f"💓 Sending keep-alive ping to {health_url}...")
                 response = requests.get(health_url, timeout=10)
                 if response.status_code == 200:
-                    logger.info(f"💓 Keep-alive ping successful ({elapsed}/{sleep_duration}s)")
+                    logger.info(f"💓 Keep-alive ping to {endpoint} successful ({elapsed}/{sleep_duration}s)")
                 else:
-                    logger.warning(f"⚠️ Keep-alive ping returned {response.status_code}")
+                    logger.warning(f"⚠️ Keep-alive ping to {endpoint} returned {response.status_code}")
             except Exception as e:
-                logger.warning(f"⚠️ Keep-alive ping failed: {e}")
+                logger.warning(f"⚠️ Keep-alive ping to {endpoint} failed: {e}")
 
 
 def main():
@@ -104,12 +115,20 @@ def main():
     print("=" * 70)
     print()
     
-    # Start health check server in background (for Render web service)
-    port = int(os.getenv('PORT', '10000'))
-    health_server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    health_thread = Thread(target=health_server.serve_forever, daemon=True)
-    health_thread.start()
-    logger.info(f"🏥 Health check server started on port {port}")
+    # Start health check servers in background on multiple ports (for Render web service redundancy)
+    base_port = int(os.getenv('PORT', '10000'))
+    ports = [base_port + i for i in range(5)]
+    health_servers = []
+    
+    for p in ports:
+        try:
+            health_server = HTTPServer(('0.0.0.0', p), HealthCheckHandler)
+            health_thread = Thread(target=health_server.serve_forever, daemon=True)
+            health_thread.start()
+            logger.info(f"🏥 Health check server started on port {p}")
+            health_servers.append(health_server)
+        except Exception as e:
+            logger.error(f"❌ Failed to start health check server on port {p}: {e}")
     
     # Show initial database stats
     try:

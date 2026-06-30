@@ -9,6 +9,7 @@ import time
 import signal
 from datetime import datetime
 import logging
+import requests
 from dotenv import load_dotenv
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -27,7 +28,9 @@ logger = logging.getLogger(__name__)
 # Simple health check handler for Render
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == '/health' or self.path == '/':
+        # Match /, /health, /health1, /health2, /health3, /health4, /health5 (with or without trailing slash)
+        path = self.path.rstrip('/')
+        if path in ['', '/health', '/health1', '/health2', '/health3', '/health4', '/health5']:
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
             self.end_headers()
@@ -84,6 +87,45 @@ def post_article():
         traceback.print_exc()
         return False
 
+def keep_alive_during_sleep(sleep_duration, ping_interval=720):
+    """
+    Keep Render service alive during sleep by pinging health endpoints
+    
+    Args:
+        sleep_duration: Total time to sleep in seconds
+        ping_interval: Time between pings in seconds (default 12 minutes = 720s)
+    """
+    # Get the service URL from environment (Render provides this)
+    service_url = os.getenv('RENDER_EXTERNAL_URL', 'http://localhost:10000')
+    
+    # Try different endpoints as fallbacks
+    endpoints = ["/health", "/health1", "/health2", "/health3", "/health4"]
+    
+    elapsed = 0
+    endpoint_idx = 0
+    while elapsed < sleep_duration:
+        # Calculate how long to sleep this iteration
+        sleep_time = min(ping_interval, sleep_duration - elapsed)
+        time.sleep(sleep_time)
+        elapsed += sleep_time
+        
+        # Ping health endpoint if we're not done sleeping
+        if elapsed < sleep_duration:
+            # Rotate endpoints to avoid hitting the same blocked/cached path
+            endpoint = endpoints[endpoint_idx % len(endpoints)]
+            endpoint_idx += 1
+            health_url = f"{service_url.rstrip('/')}{endpoint}"
+            
+            try:
+                logger.info(f"💓 Sending keep-alive ping to {health_url}...")
+                response = requests.get(health_url, timeout=10)
+                if response.status_code == 200:
+                    logger.info(f"💓 Keep-alive ping to {endpoint} successful ({elapsed}/{sleep_duration}s)")
+                else:
+                    logger.warning(f"⚠️ Keep-alive ping to {endpoint} returned {response.status_code}")
+            except Exception as e:
+                logger.warning(f"⚠️ Keep-alive ping to {endpoint} failed: {e}")
+
 def main():
     """Main scheduling loop"""
     print("=" * 70)
@@ -102,12 +144,20 @@ def main():
     print("=" * 70)
     print()
     
-    # Start health check server in background (for Render web service)
-    port = int(os.getenv('PORT', '10000'))
-    health_server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-    health_thread = Thread(target=health_server.serve_forever, daemon=True)
-    health_thread.start()
-    logger.info(f"🏥 Health check server started on port {port}")
+    # Start health check servers in background on multiple ports (for Render web service redundancy)
+    base_port = int(os.getenv('PORT', '10000'))
+    ports = [base_port + i for i in range(5)]
+    health_servers = []
+    
+    for p in ports:
+        try:
+            health_server = HTTPServer(('0.0.0.0', p), HealthCheckHandler)
+            health_thread = Thread(target=health_server.serve_forever, daemon=True)
+            health_thread.start()
+            logger.info(f"🏥 Health check server started on port {p}")
+            health_servers.append(health_server)
+        except Exception as e:
+            logger.error(f"❌ Failed to start health check server on port {p}: {e}")
     
     # Validate config
     errors = Config.validate()
@@ -170,8 +220,8 @@ def main():
             logger.info(f"⏰ Next post scheduled for: {next_post_datetime.strftime('%H:%M:%S')}")
             logger.info(f"💤 Sleeping for {wait_display}...\n")
             
-            # Sleep until next cycle
-            time.sleep(POST_INTERVAL)
+            # Sleep with keep-alive pings (every 12 minutes)
+            keep_alive_during_sleep(POST_INTERVAL, ping_interval=720)
             
         except KeyboardInterrupt:
             logger.info("\n\n⚠️ Received interrupt signal")
