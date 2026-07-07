@@ -49,30 +49,28 @@ def upload_to_catbox(file_path):
         logger.warning(f"⚠️ Catbox upload exception: {e}")
     return None
 
-def upload_to_tmpfiles(file_path):
-    """Upload file to tmpfiles.org"""
+def upload_to_0x0(file_path):
+    """Upload file to 0x0.st"""
     try:
-        logger.info(f"📤 Uploading to tmpfiles.org: {file_path}...")
+        logger.info(f"📤 Uploading to 0x0.st: {file_path}...")
         with open(file_path, 'rb') as f:
-            files = {'file': ('reel.mp4', f, 'video/mp4')}
+            files = {'file': f}
             response = requests.post(
-                'https://tmpfiles.org/api/v1/upload',
+                'https://0x0.st',
                 files=files,
                 timeout=120
             )
             if response.status_code == 200:
-                res_data = response.json()
-                if res_data.get('status') == 'success':
-                    url = res_data['data']['url']
-                    direct_url = url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
-                    logger.info(f"✅ tmpfiles.org upload successful: {direct_url}")
-                    return direct_url
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logger.info(f"✅ 0x0.st upload successful: {url}")
+                    return url
                 else:
-                    logger.warning(f"⚠️ tmpfiles.org returned status error: {res_data}")
+                    logger.warning(f"⚠️ 0x0.st returned unexpected response: {url}")
             else:
-                logger.warning(f"⚠️ tmpfiles.org upload failed (HTTP {response.status_code}): {response.text}")
+                logger.warning(f"⚠️ 0x0.st upload failed (HTTP {response.status_code}): {response.text}")
     except Exception as e:
-        logger.warning(f"⚠️ tmpfiles.org upload exception: {e}")
+        logger.warning(f"⚠️ 0x0.st upload exception: {e}")
     return None
 
 def upload_to_uguu(file_path):
@@ -123,16 +121,16 @@ def post_to_instagram(video_data, caption, headline):
         # Try multiple hosting services with fallback
         hosting_services = [
             {
-                'name': 'catbox.moe',
-                'upload_fn': upload_to_catbox
-            },
-            {
-                'name': 'tmpfiles.org',
-                'upload_fn': upload_to_tmpfiles
-            },
-            {
                 'name': 'uguu.se',
                 'upload_fn': upload_to_uguu
+            },
+            {
+                'name': '0x0.st',
+                'upload_fn': upload_to_0x0
+            },
+            {
+                'name': 'catbox.moe',
+                'upload_fn': upload_to_catbox
             }
         ]
         

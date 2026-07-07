@@ -640,64 +640,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             return None
     
     def upload_video(self, video_bytes: bytes) -> Optional[str]:
-        """Upload video to Catbox (free, supports videos up to 200MB) with tmpfiles.org and uguu.se fallbacks"""
-        # Try Catbox first
+        """Upload video to Uguu.se (free, anonymous, returns direct links) with 0x0.st and Catbox fallbacks"""
+        # Try uguu.se first
         try:
-            logger.info(f"📤 Uploading video to Catbox (size: {len(video_bytes)} bytes)...")
-            
-            files = {'fileToUpload': ('video.mp4', video_bytes, 'video/mp4')}
-            data = {'reqtype': 'fileupload'}
-            
-            response = requests.post(
-                'https://catbox.moe/user/api.php',
-                files=files,
-                data=data,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                url = response.text.strip()
-                if url.startswith('http'):
-                    logger.info(f"✅ Uploaded video to Catbox: {url}")
-                    return url
-                else:
-                    logger.warning(f"⚠️ Catbox returned unexpected response: {url}")
-            else:
-                logger.warning(f"⚠️ Catbox upload failed (HTTP {response.status_code}): {response.text}")
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Catbox upload exception: {str(e)}")
-        
-        # Fallback to tmpfiles.org
-        try:
-            logger.info(f"📤 Trying tmpfiles.org as fallback (size: {len(video_bytes)} bytes)...")
-            
-            files = {'file': ('reel.mp4', video_bytes, 'video/mp4')}
-            
-            response = requests.post(
-                'https://tmpfiles.org/api/v1/upload',
-                files=files,
-                timeout=120
-            )
-            
-            if response.status_code == 200:
-                res_data = response.json()
-                if res_data.get('status') == 'success':
-                    url = res_data['data']['url']
-                    direct_url = url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
-                    logger.info(f"✅ Uploaded video to tmpfiles.org: {direct_url}")
-                    return direct_url
-                else:
-                    logger.warning(f"⚠️ tmpfiles.org upload returned status error: {res_data}")
-            else:
-                logger.warning(f"⚠️ tmpfiles.org upload failed (HTTP {response.status_code}): {response.text}")
-                
-        except Exception as e:
-            logger.error(f"❌ tmpfiles.org upload exception: {str(e)}")
-            
-        # Fallback to uguu.se
-        try:
-            logger.info(f"📤 Trying uguu.se as fallback (size: {len(video_bytes)} bytes)...")
+            logger.info(f"📤 Uploading video to uguu.se (size: {len(video_bytes)} bytes)...")
             
             files = {'files[]': ('reel.mp4', video_bytes, 'video/mp4')}
             
@@ -725,6 +671,58 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 
         except Exception as e:
             logger.error(f"❌ uguu.se upload exception: {str(e)}")
+            
+        # Fallback to 0x0.st
+        try:
+            logger.info(f"📤 Trying 0x0.st as fallback (size: {len(video_bytes)} bytes)...")
+            
+            files = {'file': ('reel.mp4', video_bytes, 'video/mp4')}
+            
+            response = requests.post(
+                'https://0x0.st',
+                files=files,
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logger.info(f"✅ Uploaded video to 0x0.st: {url}")
+                    return url
+                else:
+                    logger.warning(f"⚠️ 0x0.st returned unexpected response: {url}")
+            else:
+                logger.warning(f"⚠️ 0x0.st upload failed (HTTP {response.status_code}): {response.text}")
+                
+        except Exception as e:
+            logger.error(f"❌ 0x0.st upload exception: {str(e)}")
+            
+        # Fallback to Catbox
+        try:
+            logger.info(f"📤 Trying Catbox as fallback (size: {len(video_bytes)} bytes)...")
+            
+            files = {'fileToUpload': ('video.mp4', video_bytes, 'video/mp4')}
+            data = {'reqtype': 'fileupload'}
+            
+            response = requests.post(
+                'https://catbox.moe/user/api.php',
+                files=files,
+                data=data,
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logger.info(f"✅ Uploaded video to Catbox: {url}")
+                    return url
+                else:
+                    logger.warning(f"⚠️ Catbox returned unexpected response: {url}")
+            else:
+                logger.warning(f"⚠️ Catbox upload failed (HTTP {response.status_code}): {response.text}")
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Catbox upload exception: {str(e)}")
             
         logger.error(f"❌ All video upload services failed")
         return None
