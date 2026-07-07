@@ -640,7 +640,7 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             return None
     
     def upload_video(self, video_bytes: bytes) -> Optional[str]:
-        """Upload video to Catbox (free, supports videos up to 200MB) with file.io fallback"""
+        """Upload video to Catbox (free, supports videos up to 200MB) with tmpfiles.org and uguu.se fallbacks"""
         # Try Catbox first
         try:
             logger.info(f"📤 Uploading video to Catbox (size: {len(video_bytes)} bytes)...")
@@ -652,7 +652,7 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 'https://catbox.moe/user/api.php',
                 files=files,
                 data=data,
-                timeout=30  # Reduced timeout
+                timeout=60
             )
             
             if response.status_code == 200:
@@ -668,31 +668,63 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         except Exception as e:
             logger.warning(f"⚠️ Catbox upload exception: {str(e)}")
         
-        # Fallback to file.io (24-hour temporary hosting)
+        # Fallback to tmpfiles.org
         try:
-            logger.info(f"📤 Trying file.io as fallback (size: {len(video_bytes)} bytes)...")
+            logger.info(f"📤 Trying tmpfiles.org as fallback (size: {len(video_bytes)} bytes)...")
             
-            files = {'file': ('video.mp4', video_bytes, 'video/mp4')}
+            files = {'file': ('reel.mp4', video_bytes, 'video/mp4')}
             
             response = requests.post(
-                'https://file.io',
+                'https://tmpfiles.org/api/v1/upload',
                 files=files,
-                timeout=30
+                timeout=120
             )
             
             if response.status_code == 200:
-                data = response.json()
-                if data.get('success'):
-                    url = data.get('link')
-                    logger.info(f"✅ Uploaded video to file.io: {url}")
-                    return url
+                res_data = response.json()
+                if res_data.get('status') == 'success':
+                    url = res_data['data']['url']
+                    direct_url = url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
+                    logger.info(f"✅ Uploaded video to tmpfiles.org: {direct_url}")
+                    return direct_url
                 else:
-                    logger.error(f"❌ file.io upload failed: {data}")
+                    logger.warning(f"⚠️ tmpfiles.org upload returned status error: {res_data}")
             else:
-                logger.error(f"❌ file.io upload failed (HTTP {response.status_code}): {response.text}")
+                logger.warning(f"⚠️ tmpfiles.org upload failed (HTTP {response.status_code}): {response.text}")
                 
         except Exception as e:
-            logger.error(f"❌ file.io upload exception: {str(e)}")
+            logger.error(f"❌ tmpfiles.org upload exception: {str(e)}")
+            
+        # Fallback to uguu.se
+        try:
+            logger.info(f"📤 Trying uguu.se as fallback (size: {len(video_bytes)} bytes)...")
+            
+            files = {'files[]': ('reel.mp4', video_bytes, 'video/mp4')}
+            
+            response = requests.post(
+                'https://uguu.se/upload.php',
+                files=files,
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                try:
+                    res_data = response.json()
+                    if 'files' in res_data and len(res_data['files']) > 0:
+                        url = res_data['files'][0]['url']
+                        logger.info(f"✅ Uploaded video to uguu.se: {url}")
+                        return url
+                except Exception:
+                    url = response.text.strip()
+                    if url.startswith('http'):
+                        logger.info(f"✅ Uploaded video to uguu.se (plain): {url}")
+                        return url
+                logger.warning(f"⚠️ uguu.se returned unexpected response format: {response.text}")
+            else:
+                logger.warning(f"⚠️ uguu.se upload failed (HTTP {response.status_code}): {response.text}")
+                
+        except Exception as e:
+            logger.error(f"❌ uguu.se upload exception: {str(e)}")
             
         logger.error(f"❌ All video upload services failed")
         return None

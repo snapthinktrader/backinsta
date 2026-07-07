@@ -23,47 +23,144 @@ logger = logging.getLogger(__name__)
 ACCESS_TOKEN = os.getenv('REACT_APP_ACCESS_TOKEN')
 INSTAGRAM_BUSINESS_ACCOUNT_ID = os.getenv('REACT_APP_INSTAGRAM_BUSINESS_ACCOUNT_ID')
 
+def upload_to_catbox(file_path):
+    """Upload file to catbox.moe"""
+    try:
+        logger.info(f"📤 Uploading to Catbox: {file_path}...")
+        with open(file_path, 'rb') as f:
+            files = {'fileToUpload': ('video.mp4', f, 'video/mp4')}
+            data = {'reqtype': 'fileupload'}
+            response = requests.post(
+                'https://catbox.moe/user/api.php',
+                files=files,
+                data=data,
+                timeout=60
+            )
+            if response.status_code == 200:
+                url = response.text.strip()
+                if url.startswith('http'):
+                    logger.info(f"✅ Catbox upload successful: {url}")
+                    return url
+                else:
+                    logger.warning(f"⚠️ Catbox returned unexpected response: {url}")
+            else:
+                logger.warning(f"⚠️ Catbox upload failed (HTTP {response.status_code}): {response.text}")
+    except Exception as e:
+        logger.warning(f"⚠️ Catbox upload exception: {e}")
+    return None
+
+def upload_to_tmpfiles(file_path):
+    """Upload file to tmpfiles.org"""
+    try:
+        logger.info(f"📤 Uploading to tmpfiles.org: {file_path}...")
+        with open(file_path, 'rb') as f:
+            files = {'file': ('reel.mp4', f, 'video/mp4')}
+            response = requests.post(
+                'https://tmpfiles.org/api/v1/upload',
+                files=files,
+                timeout=120
+            )
+            if response.status_code == 200:
+                res_data = response.json()
+                if res_data.get('status') == 'success':
+                    url = res_data['data']['url']
+                    direct_url = url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
+                    logger.info(f"✅ tmpfiles.org upload successful: {direct_url}")
+                    return direct_url
+                else:
+                    logger.warning(f"⚠️ tmpfiles.org returned status error: {res_data}")
+            else:
+                logger.warning(f"⚠️ tmpfiles.org upload failed (HTTP {response.status_code}): {response.text}")
+    except Exception as e:
+        logger.warning(f"⚠️ tmpfiles.org upload exception: {e}")
+    return None
+
+def upload_to_uguu(file_path):
+    """Upload file to uguu.se"""
+    try:
+        logger.info(f"📤 Uploading to uguu.se: {file_path}...")
+        with open(file_path, 'rb') as f:
+            files = {'files[]': ('reel.mp4', f, 'video/mp4')}
+            response = requests.post(
+                'https://uguu.se/upload.php',
+                files=files,
+                timeout=120
+            )
+            if response.status_code == 200:
+                try:
+                    res_data = response.json()
+                    if 'files' in res_data and len(res_data['files']) > 0:
+                        url = res_data['files'][0]['url']
+                        logger.info(f"✅ uguu.se upload successful: {url}")
+                        return url
+                except Exception:
+                    url = response.text.strip()
+                    if url.startswith('http'):
+                        logger.info(f"✅ uguu.se upload successful (plain): {url}")
+                        return url
+                logger.warning(f"⚠️ uguu.se returned unexpected response format: {response.text}")
+            else:
+                logger.warning(f"⚠️ uguu.se upload failed (HTTP {response.status_code}): {response.text}")
+    except Exception as e:
+        logger.warning(f"⚠️ uguu.se upload exception: {e}")
+    return None
+
 def post_to_instagram(video_data, caption, headline):
     """Post video to Instagram as Reel"""
     try:
-        logger.info("📤 Posting to Instagram via tmpfiles.org...")
+        logger.info("📤 Posting to Instagram with fallback hosting...")
         
         video_size = len(video_data)
         logger.info(f"📁 Video size: {video_size / (1024*1024):.2f} MB")
         
-        # Upload to tmpfiles.org
-        logger.info("📤 Uploading video to tmpfiles.org...")
+        # Create temp file for upload
         temp_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
         temp_video.write(video_data)
         temp_video.close()
         
+        video_url = None
+        
+        # Try multiple hosting services with fallback
+        hosting_services = [
+            {
+                'name': 'catbox.moe',
+                'upload_fn': upload_to_catbox
+            },
+            {
+                'name': 'tmpfiles.org',
+                'upload_fn': upload_to_tmpfiles
+            },
+            {
+                'name': 'uguu.se',
+                'upload_fn': upload_to_uguu
+            }
+        ]
+        
         try:
-            with open(temp_video.name, 'rb') as f:
-                files = {'file': ('reel.mp4', f, 'video/mp4')}
-                upload_response = requests.post(
-                    'https://tmpfiles.org/api/v1/upload',
-                    files=files,
-                    timeout=120
-                )
+            for service in hosting_services:
+                try:
+                    logger.info(f"📤 Trying {service['name']}...")
+                    video_url = service['upload_fn'](temp_video.name)
+                    if video_url:
+                        logger.info(f"✅ Video uploaded to {service['name']}: {video_url}")
+                        break
+                    else:
+                        logger.warning(f"⚠️ {service['name']} upload returned None, trying next service...")
+                except Exception as e:
+                    logger.warning(f"⚠️ {service['name']} error: {e}, trying next service...")
+                    continue
             
-            if upload_response.status_code != 200:
-                logger.error(f"❌ tmpfiles upload failed: {upload_response.text}")
-                os.unlink(temp_video.name)
-                return {"success": False, "error": f"tmpfiles upload failed"}
-            
-            result = upload_response.json()
-            if result.get('status') != 'success':
-                logger.error(f"❌ tmpfiles upload error: {result}")
-                os.unlink(temp_video.name)
-                return {"success": False, "error": f"tmpfiles error"}
-            
-            tmpfiles_url = result['data']['url']
-            video_url = tmpfiles_url.replace('tmpfiles.org/', 'tmpfiles.org/dl/')
-            logger.info(f"✅ Video uploaded: {video_url}")
-            
+            if not video_url:
+                logger.error("❌ All video hosting services failed")
+                return {"success": False, "error": "All video hosting services failed"}
+                
         finally:
+            # Cleanup temp file
             if os.path.exists(temp_video.name):
-                os.unlink(temp_video.name)
+                try:
+                    os.unlink(temp_video.name)
+                except Exception as cleanup_error:
+                    logger.warning(f"⚠️ Error cleaning up temp video file: {cleanup_error}")
         
         # Create Instagram media container
         create_url = f"https://graph.facebook.com/v21.0/{INSTAGRAM_BUSINESS_ACCOUNT_ID}/media"
