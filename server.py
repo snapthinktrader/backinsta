@@ -273,14 +273,17 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         section_hashtag = f"#{section.replace(' ', '').replace('-', '')}"
         caption += f"{section_hashtag} #News #BreakingNews #Trending\n\n"
         
-        # Replace NYT link with forexyy.com
-        forexyy_url = "https://forexyy.com"
-        caption += f"🔗 Read more: {forexyy_url}\n"
-        caption += f"📱 Follow us for daily news updates!"
+        # Generate direct article URL on Forexyy
+        slug = ""
+        if url:
+            slug = url.split('/')[-1].replace('.html', '')
+        if not slug and title:
+            import re
+            slug = re.sub(r'[^a-zA-Z0-9]+', '-', title.lower()).strip('-')
         
-        # Ensure caption is within Instagram limits
-        if len(caption) > Config.MAX_CAPTION_LENGTH:
-            caption = caption[:Config.MAX_CAPTION_LENGTH - 20] + "... #News"
+        forexyy_url = f"https://forexyy.com/article/{slug}" if slug else "https://forexyy.com"
+        caption += f"🎧 Listen & Read full AI analysis:\n🔗 {forexyy_url}\n\n"
+        caption += f"📱 Follow @forexyy for daily AI-powered news analysis!"
         
         return caption
     

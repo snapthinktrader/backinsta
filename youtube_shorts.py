@@ -225,9 +225,21 @@ class YouTubeShortsUploader:
             if abstract:
                 description += f"{abstract[:200]}\n\n"
         
-        # Add branding and hashtags
-        description += f"🌐 forexyy.com - Your Daily News Source\n\n"
-        description += f"#Shorts #News #BreakingNews #{section.replace(' ', '')}"
+        # Generate direct article URL on Forexyy
+        slug = ""
+        url = article.get('url', '')
+        if url:
+            slug = url.split('/')[-1].replace('.html', '')
+        if not slug and title:
+            import re
+            slug = re.sub(r'[^a-zA-Z0-9]+', '-', title.lower()).strip('-')
+        
+        forexyy_url = f"https://forexyy.com/article/{slug}" if slug else "https://forexyy.com"
+        
+        # Add branding, direct link and hashtags
+        description += f"🎧 Listen to full AI audio commentary & read story:\n🔗 {forexyy_url}\n\n"
+        description += f"🌐 forexyy.com - AI-Powered News Analysis\n\n"
+        description += f"#Shorts #News #BreakingNews #{section.replace(' ', '')} #Forexyy"
         
         # Tags
         tags = [

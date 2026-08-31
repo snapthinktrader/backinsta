@@ -51,8 +51,8 @@ def post_article():
         # Create pipeline
         pipeline = NewsToInstagramPipeline()
         
-        # Try different sections in priority order
-        sections = ['business', 'technology', 'politics', 'entertainment', 'sports', 'home']
+        # Try different sections in priority order (High-CPM categories first for maximum AdSense/Sponsorship ROI)
+        sections = ['business', 'technology', 'finance', 'politics', 'health', 'world', 'us', 'science', 'entertainment', 'sports', 'home']
         
         for section in sections:
             logger.info(f"📰 Trying section: {section}")
