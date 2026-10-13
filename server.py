@@ -1572,6 +1572,190 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         except Exception as e:
             logger.error(f"❌ Error in post pipeline: {e}")
             return False
+
+    def get_pending_reel_from_mongodb(self) -> Optional[Dict]:
+        """
+        Fetch the oldest pending pre-generated reel from MongoDB (qpost.reels)
+        
+        Returns:
+            Dict representing the pending reel or None if none available
+        """
+        try:
+            if self.db is not None and self.db.client is not None:
+                qpost_db = self.db.client.qpost
+                reel = qpost_db.reels.find_one(
+                    {"status": "pending"},
+                    sort=[("created_at", 1)]
+                )
+                if reel and reel.get("video_data"):
+                    logger.info(f"🎬 Found pre-generated reel in MongoDB: {reel.get('headline', '')[:50]}")
+                    return reel
+        except Exception as e:
+            logger.warning(f"⚠️ Could not check for pending reels in MongoDB: {e}")
+        return None
+
+    def post_pending_reel_from_mongodb(self, reel: Dict) -> bool:
+        """
+        Post a pre-generated reel from MongoDB (qpost.reels) across Instagram, YouTube Shorts, and Facebook Page
+        
+        Args:
+            reel: MongoDB document from qpost.reels
+            
+        Returns:
+            bool: True if posted successfully to at least one platform
+        """
+        try:
+            reel_id = reel.get('_id')
+            headline = reel.get('headline', 'News Update')
+            caption = reel.get('caption', '')
+            article_url = reel.get('article_url', '')
+            ai_analysis = reel.get('ai_analysis', '')
+            video_data = reel.get('video_data')
+            
+            logger.info(f"\n🚀 Processing pre-generated reel from MongoDB: {headline[:60]}...")
+            
+            if not video_data:
+                logger.error("❌ Pre-generated reel has no video_data")
+                return False
+                
+            # Write video_data to temporary file
+            temp_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
+            temp_video.write(video_data)
+            temp_video.close()
+            video_path = temp_video.name
+            
+            # Upload video to CDN for Instagram
+            video_url = self.upload_video(video_data)
+            if not video_url:
+                logger.error("❌ Failed to upload pre-generated reel to video host")
+                if os.path.exists(video_path):
+                    os.unlink(video_path)
+                return False
+                
+            instagram_success = False
+            youtube_success = False
+            facebook_success = False
+            
+            # 1. Instagram Post
+            try:
+                logger.info("📤 Posting pre-generated reel to Instagram...")
+                ig_res = self.post_to_instagram_direct(video_url, caption)
+                instagram_success = ig_res.get('success', False)
+                if instagram_success:
+                    logger.info(f"✅ Instagram Reel posted! ID: {ig_res.get('post_id')}")
+            except Exception as ig_err:
+                logger.warning(f"⚠️ Instagram posting exception: {ig_err}")
+                ig_res = {'success': False, 'error': str(ig_err)}
+                
+            # 2. YouTube Shorts Post
+            yt_res = {}
+            if self.youtube_uploader:
+                try:
+                    logger.info("🎬 Uploading pre-generated reel to YouTube Shorts...")
+                    article_data = {
+                        'title': headline,
+                        'url': article_url,
+                        'caption': caption,
+                        'abstract': ai_analysis
+                    }
+                    yt_res = self.youtube_uploader.create_short_from_article(
+                        video_path=video_path,
+                        article=article_data,
+                        ai_analysis=ai_analysis
+                    )
+                    youtube_success = yt_res.get('success', False)
+                    if youtube_success:
+                        logger.info(f"✅ YouTube Short uploaded! ID: {yt_res.get('video_id')}")
+                except Exception as yt_err:
+                    logger.warning(f"⚠️ YouTube upload exception: {yt_err}")
+                    
+            # 3. Facebook Page Post
+            fb_res = {}
+            if self.facebook_uploader and self.facebook_uploader.is_configured():
+                try:
+                    logger.info("📢 Uploading pre-generated reel to Facebook Page...")
+                    article_data = {
+                        'title': headline,
+                        'url': article_url,
+                        'caption': caption,
+                        'abstract': ai_analysis
+                    }
+                    fb_res = self.facebook_uploader.upload_video_from_article(
+                        video_path=video_path,
+                        article=article_data,
+                        ai_analysis=ai_analysis
+                    )
+                    facebook_success = fb_res.get('success', False)
+                    if facebook_success:
+                        logger.info(f"✅ Facebook Page Reel uploaded! ID: {fb_res.get('post_id')}")
+                except Exception as fb_err:
+                    logger.warning(f"⚠️ Facebook upload exception: {fb_err}")
+
+            # Cleanup temporary file
+            try:
+                if os.path.exists(video_path):
+                    os.unlink(video_path)
+            except Exception:
+                pass
+                
+            # Update databases
+            if instagram_success or youtube_success or facebook_success:
+                logger.info("🎉 Pre-generated reel posted successfully to at least one platform!")
+                # Update qpost.reels status to posted
+                try:
+                    qpost_db = self.db.client.qpost
+                    qpost_db.reels.update_one(
+                        {'_id': reel_id},
+                        {'$set': {
+                            'status': 'posted',
+                            'posted_at': datetime.utcnow(),
+                            'instagram_post_id': ig_res.get('post_id') if instagram_success else None,
+                            'youtube_video_id': yt_res.get('video_id') if youtube_success else None,
+                            'fb_post_id': fb_res.get('post_id') if facebook_success else None
+                        }}
+                    )
+                except Exception as qp_err:
+                    logger.warning(f"⚠️ Could not update qpost.reels status: {qp_err}")
+                    
+                # Also save to backinsta.posted_articles for analytics
+                try:
+                    if self.db is not None:
+                        self.db.mark_as_posted(
+                            {'title': headline, 'url': article_url, 'section': reel.get('section', 'news')},
+                            {
+                                'post_id': ig_res.get('post_id') if instagram_success else None,
+                                'youtube_video_id': yt_res.get('video_id') if youtube_success else None,
+                                'fb_post_id': fb_res.get('post_id') if facebook_success else None
+                            }
+                        )
+                except Exception as bi_err:
+                    logger.warning(f"⚠️ Could not save to backinsta.posted_articles: {bi_err}")
+                    
+                return True
+            else:
+                logger.error("❌ All platforms failed for pre-generated reel")
+                try:
+                    qpost_db = self.db.client.qpost
+                    qpost_db.reels.update_one(
+                        {'_id': reel_id},
+                        {
+                            '$set': {
+                                'status': 'failed',
+                                'error_message': 'All platforms failed',
+                                'failed_at': datetime.utcnow()
+                            },
+                            '$inc': {'retry_count': 1}
+                        }
+                    )
+                except Exception:
+                    pass
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Error in post_pending_reel_from_mongodb: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     def run_posting_cycle(self, section: str = 'home', max_posts: int = 3):
         """

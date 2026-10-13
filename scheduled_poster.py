@@ -51,7 +51,18 @@ def post_article():
         # Create pipeline
         pipeline = NewsToInstagramPipeline()
         
-        # Try different sections in priority order (High-CPM categories first for maximum AdSense/Sponsorship ROI)
+        # Priority 1: Check if there is a pre-generated reel in MongoDB (from localreelgenerator / GitHub Actions)
+        pending_reel = pipeline.get_pending_reel_from_mongodb()
+        if pending_reel:
+            logger.info("🎬 Pre-generated reel found in MongoDB (qpost.reels)! Posting it directly...")
+            success = pipeline.post_pending_reel_from_mongodb(pending_reel)
+            if success:
+                logger.info("🎉 Successfully posted pre-generated reel from MongoDB!")
+                return True
+            else:
+                logger.warning("⚠️ Failed to post pre-generated reel, continuing with fresh article fetch...")
+
+        # Priority 2: Try different sections in priority order (High-CPM categories first)
         sections = ['business', 'technology', 'finance', 'politics', 'health', 'world', 'us', 'science', 'entertainment', 'sports', 'home']
         
         for section in sections:
