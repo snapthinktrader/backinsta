@@ -5,6 +5,7 @@ using the newly provided Graph API Explorer User Token.
 """
 
 import json
+import os
 import requests
 
 from dotenv import load_dotenv

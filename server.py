@@ -208,21 +208,25 @@ class NewsToInstagramPipeline:
             AI-generated analysis text
         """
         try:
-            # Use Groq API for AI analysis (similar to Webstory)
+            # Use Groq API for AI analysis (with active key pool & model fallback)
             import os
-            groq_api_key = os.getenv('GROQ_API_KEY')
-            
-            if not groq_api_key:
-                logger.warning("⚠️ GROQ_API_KEY not set, skipping AI analysis")
-                return ""
-            
             from groq import Groq
-            client = Groq(api_key=groq_api_key)
-            
+
+            # Collect active Groq API keys from environment
+            raw_keys = os.getenv('GROQ_API_KEYS', '')
+            keys_list = [k.strip() for k in raw_keys.split(',') if k.strip()]
+            single_key = os.getenv('GROQ_API_KEY')
+            if single_key and single_key not in keys_list:
+                keys_list.insert(0, single_key.strip())
+
+            if not keys_list:
+                logger.warning("⚠️ No GROQ_API_KEY or GROQ_API_KEYS set, skipping AI analysis")
+                return ""
+
             title = article.get('title', '')
             abstract = article.get('abstract', '')
             content = article.get('content', abstract)
-            
+
             prompt = f"""You are a news analyst. Provide a brief, engaging 2-3 sentence analysis of this news article for social media.
 Focus on key insights, implications, or interesting angles. Keep it conversational and engaging.
 
@@ -230,37 +234,52 @@ Title: {title}
 Summary: {abstract}
 
 Provide ONLY the analysis, no extra labels or formatting:"""
-            
+
             models_to_try = [
                 os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
                 "openai/gpt-oss-120b",
                 "openai/gpt-oss-20b"
             ]
-            completion = None
-            for model_name in models_to_try:
-                try:
-                    completion = client.chat.completions.create(
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": "You are an expert news analyst who provides insightful commentary on current events. Your analysis should be professional, balanced, and informative."
-                            },
-                            {
-                                "role": "user",
-                                "content": prompt
-                            }
-                        ],
-                        model=model_name,
-                        temperature=0.7,
-                        max_tokens=500
-                    )
-                    break
-                except Exception as m_err:
-                    logger.warning(f"⚠️ Groq model {model_name} failed: {m_err}, trying next...")
 
-            if not completion:
-                raise RuntimeError("All Groq models failed")
-            
+            completion = None
+            last_err = None
+
+            # Try across available active keys and models
+            for key_idx, api_key in enumerate(keys_list):
+                try:
+                    client = Groq(api_key=api_key)
+                    for model_name in models_to_try:
+                        try:
+                            completion = client.chat.completions.create(
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": "You are an expert news analyst who provides insightful commentary on current events. Your analysis should be professional, balanced, and informative."
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": prompt
+                                    }
+                                ],
+                                model=model_name,
+                                temperature=0.7,
+                                max_tokens=300
+                            )
+                            if completion and completion.choices:
+                                break
+                        except Exception as m_err:
+                            last_err = m_err
+                            logger.warning(f"⚠️ Groq model {model_name} with key [{key_idx+1}/{len(keys_list)}] failed: {m_err}")
+                    
+                    if completion and completion.choices:
+                        break
+                except Exception as k_err:
+                    last_err = k_err
+                    logger.warning(f"⚠️ Groq client initialization with key [{key_idx+1}/{len(keys_list)}] failed: {k_err}")
+
+            if not completion or not completion.choices:
+                raise RuntimeError(f"All Groq keys and models failed: {last_err}")
+
             analysis = completion.choices[0].message.content.strip()
             logger.info(f"✅ Generated AI analysis: {analysis[:100]}...")
             return analysis

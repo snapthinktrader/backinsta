@@ -47,7 +47,9 @@ def main():
         "FB_PAGE_ID": os.getenv("FB_PAGE_ID", "1394981273691815"),
         "FB_PAGE_ACCESS_TOKEN": os.getenv("FB_PAGE_ACCESS_TOKEN", ""),
         "REACT_APP_ACCESS_TOKEN": os.getenv("REACT_APP_ACCESS_TOKEN", ""),
-        "GROQ_API_KEY": os.getenv("GROQ_API_KEY", "")
+        "GROQ_MODEL": os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
+        "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
+        "GROQ_API_KEYS": os.getenv("GROQ_API_KEYS", "")
     }
 
     env_dict.update(updates)

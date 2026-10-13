@@ -34,6 +34,11 @@ class Config:
     # MongoDB (for BackInsta tracking)
     MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb+srv://aj:aj@qpost.lk5htbl.mongodb.net/?retryWrites=true&w=majority&appName=qpost')
     
+    # Groq AI Configuration
+    GROQ_MODEL = os.getenv('GROQ_MODEL', 'qwen/qwen3.8-27b')
+    GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+    GROQ_API_KEYS = os.getenv('GROQ_API_KEYS')
+    
     # Image Hosting
     IMGBB_API_KEY = os.getenv('IMGBB_API_KEY')
     
