@@ -239,7 +239,7 @@ def get_pending_reel():
         if client:
             client.close()
 
-def mark_reel_posted(reel_id, instagram_post_id=None, youtube_video_id=None):
+def mark_reel_posted(reel_id, instagram_post_id=None, youtube_video_id=None, fb_post_id=None):
     """
     Mark a reel as posted
     
@@ -247,6 +247,7 @@ def mark_reel_posted(reel_id, instagram_post_id=None, youtube_video_id=None):
         reel_id: ID of the reel (string)
         instagram_post_id: Instagram post ID (optional)
         youtube_video_id: YouTube video ID (optional)
+        fb_post_id: Facebook Page post ID (optional)
     """
     client = None
     try:
@@ -254,16 +255,18 @@ def mark_reel_posted(reel_id, instagram_post_id=None, youtube_video_id=None):
         client = get_connection()
         db = client['qpost']
         
+        update_fields = {
+            'status': 'posted',
+            'posted_at': datetime.now(),
+            'instagram_post_id': instagram_post_id,
+            'youtube_video_id': youtube_video_id
+        }
+        if fb_post_id:
+            update_fields['fb_post_id'] = fb_post_id
+        
         db.reels.update_one(
             {'_id': ObjectId(reel_id)},
-            {
-                '$set': {
-                    'status': 'posted',
-                    'posted_at': datetime.now(),
-                    'instagram_post_id': instagram_post_id,
-                    'youtube_video_id': youtube_video_id
-                }
-            }
+            {'$set': update_fields}
         )
         
         client.close()

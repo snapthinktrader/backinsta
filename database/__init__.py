@@ -1,1 +1,1 @@
-# Database package for CockroachDB integration
+# Database package for BackInsta (MongoDB)

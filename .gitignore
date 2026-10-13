@@ -11,6 +11,7 @@ env/
 
 # Environment
 .env
+.env*
 .env.local
 .env.*.local
 
@@ -20,6 +21,7 @@ env/
 client_secret*.json
 backinsta-gcp-key.json
 credentials.json
+*.pickle
 token.pickle
 
 # IDE

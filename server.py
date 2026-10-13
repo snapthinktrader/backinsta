@@ -19,6 +19,7 @@ import tempfile
 from config import Config
 from mongo_database import BackInstaDB, generate_article_id
 from youtube_shorts import YouTubeShortsUploader
+from facebook_uploader import FacebookPageUploader
 
 # Setup logging
 logging.basicConfig(
@@ -54,6 +55,19 @@ class NewsToInstagramPipeline:
                 logger.info("✅ YouTube Shorts uploader initialized")
             except Exception as e:
                 logger.warning(f"⚠️ Could not initialize YouTube Shorts uploader: {e}")
+        
+        # Initialize Facebook Page uploader (if enabled)
+        self.facebook_uploader = None
+        use_facebook = os.getenv('USE_FACEBOOK_PAGE', 'true').lower() in ('true', '1', 'yes')
+        if use_facebook:
+            try:
+                self.facebook_uploader = FacebookPageUploader()
+                if self.facebook_uploader.is_configured():
+                    logger.info("✅ Facebook Page uploader initialized")
+                else:
+                    logger.warning("⚠️ Facebook Page uploader not configured (missing token or ID)")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize Facebook Page uploader: {e}")
         
         # Initialize Webstory MongoDB connection
         self.webstory_db = None
@@ -1381,6 +1395,53 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 except Exception as yt_error:
                     logger.warning(f"⚠️ YouTube Shorts upload error: {yt_error}")
             
+            # ALWAYS attempt Facebook Page if enabled (independent of other platforms)
+            facebook_success = False
+            if self.facebook_uploader and self.facebook_uploader.is_configured():
+                try:
+                    logger.info("\n📢 Uploading to Facebook Page (forexyy.com)...")
+                    if use_reels and video_path and os.path.exists(video_path):
+                        fb_result = self.facebook_uploader.upload_video_from_article(
+                            video_path=video_path,
+                            article=article,
+                            ai_analysis=ai_analysis
+                        )
+                    elif temp_img_path and os.path.exists(temp_img_path):
+                        fb_result = self.facebook_uploader.upload_photo_from_article(
+                            image_url_or_path=temp_img_path,
+                            caption=caption
+                        )
+                    else:
+                        fb_result = self.facebook_uploader.upload_feed_post(
+                            message=caption,
+                            link=article.get('url')
+                        )
+                    
+                    if fb_result.get('success'):
+                        facebook_success = True
+                        logger.info("✅ Facebook Page post created successfully!")
+                        logger.info(f"📘 Facebook Post ID: {fb_result.get('post_id')}")
+                        logger.info(f"🔗 Facebook URL: {fb_result.get('facebook_url')}")
+                        
+                        # Save Facebook info to database
+                        try:
+                            if self.db is not None:
+                                self.db.posts.update_one(
+                                    {'article_url': article.get('url')},
+                                    {'$set': {
+                                        'fb_post_id': fb_result.get('post_id'),
+                                        'fb_url': fb_result.get('facebook_url'),
+                                        'fb_posted_at': datetime.utcnow()
+                                    }},
+                                    upsert=True
+                                )
+                        except Exception as db_error:
+                            logger.warning(f"⚠️ Could not save Facebook info to database: {db_error}")
+                    else:
+                        logger.warning(f"⚠️ Facebook upload failed: {fb_result.get('error')}")
+                except Exception as fb_error:
+                    logger.warning(f"⚠️ Facebook Page upload error: {fb_error}")
+            
             # Cleanup temporary files
             try:
                 if video_path and os.path.exists(video_path):
@@ -1390,17 +1451,16 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             except Exception as cleanup_error:
                 logger.warning(f"⚠️ Cleanup error: {cleanup_error}")
             
-            # Consider success if either platform succeeded
-            if instagram_success or youtube_success:
-                if instagram_success and youtube_success:
-                    logger.info("🎉 Multi-platform success: Posted to both Instagram and YouTube!")
-                elif instagram_success:
-                    logger.info("✅ Posted to Instagram (YouTube not configured or failed)")
-                elif youtube_success:
-                    logger.info("✅ Posted to YouTube (Instagram failed but YouTube succeeded)")
+            # Consider success if any platform succeeded
+            if instagram_success or youtube_success or facebook_success:
+                successful_platforms = []
+                if instagram_success: successful_platforms.append("Instagram")
+                if youtube_success: successful_platforms.append("YouTube")
+                if facebook_success: successful_platforms.append("Facebook")
+                logger.info(f"🎉 Multi-platform success: Posted to {', '.join(successful_platforms)}!")
                 return True
             else:
-                logger.error(f"❌ Both platforms failed")
+                logger.error(f"❌ All platforms failed")
                 
                 # CRITICAL FIX: Mark article as attempted to prevent infinite retry loop
                 # This prevents the same article from being retried in the next cycle
@@ -1412,10 +1472,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     if self.db is not None:
                         self.db.mark_as_posted(article, {
                             'success': False,
-                            'error': 'Both Instagram and YouTube failed (quota/rate limits)',
+                            'error': 'All platforms failed (quota/rate limits)',
                             'attempted_at': datetime.utcnow(),
                             'instagram_rate_limited': instagram_rate_limited,
-                            'platforms_attempted': ['instagram', 'youtube']
+                            'platforms_attempted': ['instagram', 'youtube', 'facebook']
                         })
                         logger.info("✅ Article marked as attempted in database")
                 except Exception as db_error:

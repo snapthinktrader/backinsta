@@ -26,6 +26,11 @@ class Config:
     INSTAGRAM_ACCESS_TOKEN = os.getenv('REACT_APP_ACCESS_TOKEN')
     INSTAGRAM_ACCOUNT_ID = os.getenv('REACT_APP_INSTAGRAM_BUSINESS_ACCOUNT_ID', '17841474412696876')
     
+    # Facebook Page API
+    USE_FACEBOOK_PAGE = os.getenv('USE_FACEBOOK_PAGE', 'true').lower() in ('true', '1', 'yes')
+    FB_PAGE_ID = os.getenv('FB_PAGE_ID', '1394981273691815')
+    FB_PAGE_ACCESS_TOKEN = os.getenv('FB_PAGE_ACCESS_TOKEN')
+    
     # MongoDB (for BackInsta tracking)
     MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb+srv://aj:aj@qpost.lk5htbl.mongodb.net/?retryWrites=true&w=majority&appName=qpost')
     
