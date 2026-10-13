@@ -231,21 +231,35 @@ Summary: {abstract}
 
 Provide ONLY the analysis, no extra labels or formatting:"""
             
-            completion = client.chat.completions.create(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert news analyst who provides insightful commentary on current events. Your analysis should be professional, balanced, and informative."
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                model="llama-3.1-8b-instant",  # Same model as Webstory
-                temperature=0.7,
-                max_tokens=500
-            )
+            models_to_try = [
+                os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b"
+            ]
+            completion = None
+            for model_name in models_to_try:
+                try:
+                    completion = client.chat.completions.create(
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are an expert news analyst who provides insightful commentary on current events. Your analysis should be professional, balanced, and informative."
+                            },
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ],
+                        model=model_name,
+                        temperature=0.7,
+                        max_tokens=500
+                    )
+                    break
+                except Exception as m_err:
+                    logger.warning(f"⚠️ Groq model {model_name} failed: {m_err}, trying next...")
+
+            if not completion:
+                raise RuntimeError("All Groq models failed")
             
             analysis = completion.choices[0].message.content.strip()
             logger.info(f"✅ Generated AI analysis: {analysis[:100]}...")
@@ -1017,11 +1031,17 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         try:
             logger.info("📤 Posting to Instagram (direct method)...")
 
-            # Ensure the image URL is reachable and likely downloadable by Instagram
+            # Ensure the media URL is reachable and accessible
             def ensure_image_accessible(url: str) -> str:
-                """Return a public image URL that Instagram can fetch. If the provided
-                URL is unreachable or too large, download, recompress and re-upload it
-                via our upload_image() helper and return that new URL."""
+                """Return a public media URL that can be fetched. Videos are passed through directly."""
+                if not url:
+                    return url
+
+                # If URL is a video, pass through directly
+                if url.lower().endswith(('.mp4', '.mov', '.avi', '.webm')):
+                    logger.info(f"✅ Video URL detected, skipping image recompression: {url}")
+                    return url
+
                 try:
                     head = requests.head(url, timeout=10, allow_redirects=True)
                 except Exception:
@@ -1032,7 +1052,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 else:
                     ctype = head.headers.get('Content-Type', '')
                     clen = head.headers.get('Content-Length')
-                    if not ctype.startswith('image'):
+                    if ctype.startswith('video'):
+                        logger.info(f"✅ Video Content-Type detected ({ctype}), skipping image recompression")
+                        return url
+                    elif not ctype.startswith('image'):
                         logger.warning(f"⚠️ Image URL Content-Type not image: {ctype} - will reupload")
                     else:
                         # If content-length exists and is < 8MB, trust it

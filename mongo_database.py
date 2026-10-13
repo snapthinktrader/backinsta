@@ -96,13 +96,18 @@ class BackInstaDB:
             logger.error(f"❌ MongoDB connection failed: {e}")
             self.client = None
     
+    @property
+    def posts(self):
+        """Compatibility property exposing collection as posts"""
+        return self.collection
+
     def mark_as_posted(self, article: Dict, post_result: Dict) -> bool:
         """
         Mark article as posted (lightweight: only stores article ID and minimal data)
         
         Args:
             article: Article data (should have article_id)
-            post_result: Instagram/YouTube post result
+            post_result: Instagram/YouTube/Facebook post result
             
         Returns:
             True if saved successfully
@@ -130,6 +135,8 @@ class BackInstaDB:
                 'instagram_post_id': post_result.get('post_id'),
                 'youtube_video_id': post_result.get('youtube_video_id'),
                 'youtube_url': post_result.get('youtube_url'),
+                'fb_post_id': post_result.get('fb_post_id'),
+                'fb_url': post_result.get('fb_url'),
                 'posted_at': datetime.now()
             }
             
