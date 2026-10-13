@@ -680,14 +680,32 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     logger.error(f"❌ imgbb upload failed (HTTP {response.status_code}): {response.text}")
             else:
                 logger.warning("⚠️ IMGBB_API_KEY not configured for fallback")
-            
-            return None
                 
         except Exception as e:
             logger.error(f"❌ Image upload exception: {str(e)}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return None
+
+        # Fallback 3: Try uguu.se (anonymous, fast, works reliably for images)
+        try:
+            logger.info(f"📤 Trying uguu.se as image fallback (size: {len(image_bytes)} bytes)...")
+            files = {'files[]': ('overlay.jpg', image_bytes, 'image/jpeg')}
+            response = requests.post('https://uguu.se/upload.php', files=files, timeout=30)
+            if response.status_code == 200:
+                try:
+                    res_data = response.json()
+                    if 'files' in res_data and len(res_data['files']) > 0:
+                        url = res_data['files'][0]['url']
+                        logger.info(f"✅ Uploaded image to uguu.se: {url}")
+                        return url
+                except Exception:
+                    url = response.text.strip()
+                    if url.startswith('http'):
+                        logger.info(f"✅ Uploaded image to uguu.se (plain): {url}")
+                        return url
+            logger.warning(f"⚠️ uguu.se image upload failed (HTTP {response.status_code}): {response.text}")
+        except Exception as uguu_err:
+            logger.error(f"❌ uguu.se image upload exception: {uguu_err}")
+
+        return None
     
     def upload_video(self, video_bytes: bytes) -> Optional[str]:
         """Upload video to Uguu.se (free, anonymous, returns direct links) with 0x0.st and Catbox fallbacks"""
@@ -1410,10 +1428,10 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                         
                         # Save YouTube info to database
                         try:
-                            if self.db is not None:
+                            if self.db is not None and self.db.collection is not None:
                                 # If Instagram succeeded, update existing record
                                 if instagram_success:
-                                    self.db.posts.update_one(
+                                    self.db.collection.update_one(
                                         {'article_url': article.get('url')},
                                         {'$set': {
                                             'youtube_video_id': youtube_result.get('video_id'),
@@ -1467,8 +1485,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                         
                         # Save Facebook info to database
                         try:
-                            if self.db is not None:
-                                self.db.posts.update_one(
+                            if self.db is not None and self.db.collection is not None:
+                                self.db.collection.update_one(
                                     {'article_url': article.get('url')},
                                     {'$set': {
                                         'fb_post_id': fb_result.get('post_id'),
