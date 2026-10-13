@@ -1130,8 +1130,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             final_image_url = ensure_image_accessible(image_url)
 
             # Attempt to create and publish media with retries and backoff
-            create_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media"
-            publish_url = f"https://graph.facebook.com/v18.0/{self.account_id}/media_publish"
+            create_url = f"https://graph.facebook.com/v21.0/{self.account_id}/media"
+            publish_url = f"https://graph.facebook.com/v21.0/{self.account_id}/media_publish"
 
             # Detect if it's a video (Reel) or image
             is_video = final_image_url.lower().endswith(('.mp4', '.mov', '.avi'))
@@ -1177,10 +1177,36 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 logger.error("❌ Could not create media object after retries")
                 return {'success': False, 'error': 'Failed to create media object after retries'}
 
-            # Wait for Instagram to process the media (videos need more time)
-            wait_time = 30 if is_video else 10
-            logger.info(f"⏳ Waiting {wait_time} seconds for Instagram to process the {'video' if is_video else 'image'}...")
-            time.sleep(wait_time)
+            # Wait for Instagram to process the media
+            if is_video:
+                logger.info("⏳ Polling Reel container status from Meta until processing finishes...")
+                status_url = f"https://graph.facebook.com/v21.0/{creation_id}"
+                status_params = {
+                    "fields": "status_code,status",
+                    "access_token": self.access_token
+                }
+                is_ready = False
+                for attempt in range(1, 15):
+                    time.sleep(5)
+                    try:
+                        st_resp = requests.get(status_url, params=status_params, timeout=15)
+                        if st_resp.status_code == 200:
+                            st_data = st_resp.json()
+                            code = st_data.get("status_code")
+                            logger.info(f"   [{attempt}/15] Container status: {code} ({st_data.get('status')})")
+                            if code == "FINISHED":
+                                is_ready = True
+                                break
+                            elif code == "ERROR":
+                                logger.error(f"❌ Container processing error: {st_data}")
+                                return {'success': False, 'error': f"Container processing error: {st_data}", 'creation_id': creation_id}
+                    except Exception as st_err:
+                        logger.warning(f"   Status check error: {st_err}")
+                if not is_ready:
+                    logger.warning("⚠️ Container did not reach FINISHED, attempting publish anyway...")
+            else:
+                logger.info("⏳ Waiting 10 seconds for image to process...")
+                time.sleep(10)
 
             # Publish media (single attempt only to avoid duplicates)
             try:

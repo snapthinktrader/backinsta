@@ -47,6 +47,8 @@ def main():
         "FB_PAGE_ID": os.getenv("FB_PAGE_ID", "1394981273691815"),
         "FB_PAGE_ACCESS_TOKEN": os.getenv("FB_PAGE_ACCESS_TOKEN", ""),
         "REACT_APP_ACCESS_TOKEN": os.getenv("REACT_APP_ACCESS_TOKEN", ""),
+        "REACT_APP_INSTAGRAM_BUSINESS_ACCOUNT_ID": os.getenv("REACT_APP_INSTAGRAM_BUSINESS_ACCOUNT_ID", "17841477569192718"),
+        "USE_INSTAGRAM_REELS": os.getenv("USE_INSTAGRAM_REELS", "true"),
         "GROQ_MODEL": os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b"),
         "GROQ_API_KEY": os.getenv("GROQ_API_KEY", ""),
         "GROQ_API_KEYS": os.getenv("GROQ_API_KEYS", "")
