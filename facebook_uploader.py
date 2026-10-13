@@ -80,19 +80,28 @@ class FacebookPageUploader:
             return {"success": False, "error": f"Video file not found at: {video_path}"}
 
         try:
-            headline = article.get("title") or (ai_analysis.get("headline") if ai_analysis else "") or "Forexyy News Update"
+            headline = article.get("title") if isinstance(article, dict) else "Forexyy News Update"
+            if not headline and isinstance(ai_analysis, dict):
+                headline = ai_analysis.get("headline", "")
+            if not headline:
+                headline = "Forexyy News Update"
+
             caption = ""
-            if ai_analysis and ai_analysis.get("caption"):
+            if isinstance(ai_analysis, str) and ai_analysis.strip():
+                caption = f"{headline}\n\n{ai_analysis.strip()}"
+            elif isinstance(ai_analysis, dict) and ai_analysis.get("caption"):
                 caption = ai_analysis.get("caption")
             else:
-                abstract = article.get("abstract", "")
+                abstract = article.get("abstract", "") if isinstance(article, dict) else ""
                 caption = f"{headline}\n\n{abstract}\n\nStay updated with Forexyy!"
 
             hashtags = "#Forexyy #News #Finance #Markets #WorldNews"
-            if ai_analysis and ai_analysis.get("hashtags"):
+            if isinstance(ai_analysis, dict) and ai_analysis.get("hashtags"):
                 tags = ai_analysis.get("hashtags")
                 if isinstance(tags, list):
                     hashtags = " ".join(f"#{t.lstrip('#')}" for t in tags)
+                elif isinstance(tags, str):
+                    hashtags = tags
                 elif isinstance(tags, str):
                     hashtags = tags
 
