@@ -219,6 +219,13 @@ def main():
                     time.sleep(300)  # Wait 5 minutes extra
                     error_count = 0
             
+            # Auto-cleanup check to keep MongoDB Atlas storage idle below 60%
+            try:
+                from database.mongodb_setup import check_and_cleanup_if_needed
+                check_and_cleanup_if_needed(threshold=0.60)
+            except Exception as cleanup_err:
+                logger.warning(f"⚠️ Storage auto-cleanup check warning: {cleanup_err}")
+            
             # Calculate next posting time
             next_post_time = datetime.now().timestamp() + POST_INTERVAL
             next_post_datetime = datetime.fromtimestamp(next_post_time)

@@ -77,8 +77,16 @@ class YouTubeShortsUploader:
         
         # Load token if exists
         if os.path.exists(self.token_file):
-            with open(self.token_file, 'rb') as token:
-                creds = pickle.load(token)
+            try:
+                with open(self.token_file, 'rb') as token:
+                    creds = pickle.load(token)
+            except Exception as pe:
+                logger.warning(f"⚠️ Failed to unpickle {self.token_file}: {pe}. Removing corrupt token file.")
+                try:
+                    os.remove(self.token_file)
+                except Exception:
+                    pass
+                creds = None
         
         # If no valid credentials, authenticate
         if not creds or not creds.valid:
@@ -109,7 +117,8 @@ class YouTubeShortsUploader:
         logger.info("✅ YouTube API authenticated")
     
     def upload_short(self, video_path: str, title: str, description: str = "", 
-                     tags: list = None, category_id: str = "25") -> Optional[Dict]:
+                     tags: list = None, category_id: str = "25",
+                     thumbnail_path: str = None) -> Optional[Dict]:
         """
         Upload video as YouTube Short
         
@@ -119,6 +128,7 @@ class YouTubeShortsUploader:
             description: Video description (include #Shorts)
             tags: List of tags
             category_id: YouTube category (25 = News & Politics)
+            thumbnail_path: Optional path to custom cover image / thumbnail
             
         Returns:
             Upload result dict or None if failed
@@ -180,6 +190,27 @@ class YouTubeShortsUploader:
             logger.info(f"✅ YouTube Short uploaded successfully!")
             logger.info(f"🎬 Video ID: {video_id}")
             logger.info(f"🔗 URL: {video_url}")
+
+            # Upload custom thumbnail if provided
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                try:
+                    actual_thumb = thumbnail_path
+                    # YouTube API has a strict 2MB limit on thumbnail uploads
+                    if os.path.getsize(actual_thumb) > 2 * 1024 * 1024:
+                        jpg_alt = os.path.splitext(actual_thumb)[0] + "_yt.jpg"
+                        if not os.path.exists(jpg_alt):
+                            from PIL import Image
+                            im = Image.open(actual_thumb).convert("RGB")
+                            im.save(jpg_alt, format="JPEG", quality=95)
+                        actual_thumb = jpg_alt
+
+                    mime = "image/jpeg" if actual_thumb.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                    logger.info(f"🖼️ Setting custom thumbnail on YouTube Short ({actual_thumb}, {os.path.getsize(actual_thumb)/1024/1024:.2f} MB)...")
+                    thumb_media = MediaFileUpload(actual_thumb, mimetype=mime)
+                    self.youtube.thumbnails().set(videoId=video_id, media_body=thumb_media).execute()
+                    logger.info("✅ Custom YouTube thumbnail attached successfully!")
+                except Exception as te:
+                    logger.warning(f"⚠️ Could not attach YouTube thumbnail: {te}")
             
             return {
                 'success': True,
@@ -194,7 +225,7 @@ class YouTubeShortsUploader:
             logger.error(traceback.format_exc())
             return None
     
-    def create_short_from_article(self, article: Dict, video_path: str, ai_analysis: str = None) -> Optional[Dict]:
+    def create_short_from_article(self, article: Dict, video_path: str, ai_analysis: str = None, thumbnail_path: str = None) -> Optional[Dict]:
         """
         Create and upload YouTube Short from article
         
@@ -202,6 +233,7 @@ class YouTubeShortsUploader:
             article: Article dictionary
             video_path: Path to video file
             ai_analysis: AI-generated analysis/commentary (optional)
+            thumbnail_path: Optional path to custom cover image / thumbnail
             
         Returns:
             Upload result or None
@@ -256,7 +288,8 @@ class YouTubeShortsUploader:
             title=title,
             description=description,
             tags=tags,
-            category_id='25'  # News & Politics
+            category_id='25',  # News & Politics
+            thumbnail_path=thumbnail_path
         )
 
 

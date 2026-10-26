@@ -363,89 +363,104 @@ def get_stats():
         if client:
             client.close()
 
-def check_and_cleanup_if_needed():
+def check_and_cleanup_if_needed(threshold: float = 0.60) -> bool:
     """
-    Check MongoDB storage usage and auto-cleanup if >89% full
+    Check MongoDB storage usage and auto-cleanup if > threshold (default 60% full).
+    Keeps MongoDB Atlas free tier storage idle and well below the 512 MB quota.
+    
     Returns: True if cleanup was performed, False otherwise
     """
+    client = None
     try:
         client = get_connection()
         db = client['qpost']
         
         # Get database stats
         db_stats = db.command('dbstats')
-        storage_size_mb = db_stats['storageSize'] / (1024 * 1024)
+        data_size_mb = db_stats.get('dataSize', 0) / (1024 * 1024)
+        storage_size_mb = db_stats.get('storageSize', 0) / (1024 * 1024)
+        effective_size_mb = max(data_size_mb, storage_size_mb)
         
-        # Free tier limit
+        # Free tier limit (512 MB) - Atlas quota is enforced on dataSize
         FREE_TIER_LIMIT_MB = 512
-        CLEANUP_THRESHOLD = 0.89  # 89%
+        CLEANUP_THRESHOLD = float(os.getenv('CLEANUP_THRESHOLD', threshold))
         
-        usage_percentage = storage_size_mb / FREE_TIER_LIMIT_MB
+        usage_percentage = data_size_mb / FREE_TIER_LIMIT_MB
         
         if usage_percentage >= CLEANUP_THRESHOLD:
-            print(f"\n⚠️  Storage at {usage_percentage*100:.1f}% ({storage_size_mb:.2f} MB / {FREE_TIER_LIMIT_MB} MB)")
-            print(f"🧹 Running auto-cleanup...")
+            print(f"\n⚠️ Storage at {usage_percentage*100:.1f}% ({effective_size_mb:.2f} MB / {FREE_TIER_LIMIT_MB} MB) >= {CLEANUP_THRESHOLD*100:.0f}% threshold")
+            print(f"🧹 Running auto-cleanup to keep storage idle below {CLEANUP_THRESHOLD*100:.0f}%...")
             
-            # Clean posted reels
             cleaned_count = 0
             space_freed_mb = 0
             
-            posted_reels = list(db.reels.find({
-                'status': 'posted',
-                'video_data': {'$exists': True, '$ne': None}
-            }))
-            
-            for reel in posted_reels:
-                if reel.get('video_data'):
-                    size_mb = len(reel['video_data']) / (1024 * 1024)
-                    space_freed_mb += size_mb
-                
-                db.reels.update_one(
-                    {'_id': reel['_id']},
-                    {
-                        '$unset': {'video_data': ''},
-                        '$set': {'cleaned_at': datetime.now()}
-                    }
+            # 1. Delete historical posted reels older than 7 days (deletes are always permitted by Atlas even when quota exceeded)
+            cutoff_7d = datetime.now() - timedelta(days=7)
+            del_res = db.reels.delete_many({'status': 'posted', 'created_at': {'$lt': cutoff_7d}})
+            cleaned_count += del_res.deleted_count
+            print(f"   🗑️ Deleted {del_res.deleted_count} posted reels older than 7 days.")
+
+            # 2. Strip heavy binaries from remaining posted reels
+            try:
+                unset_res = db.reels.update_many(
+                    {'status': 'posted', '$or': [{'video_data': {'$exists': True, '$ne': None}}, {'thumbnail_data': {'$exists': True, '$ne': None}}]},
+                    {'$unset': {'video_data': '', 'thumbnail_data': ''}, '$set': {'cleaned_at': datetime.now()}}
                 )
-                cleaned_count += 1
+                print(f"   🧹 Unset binary data from {unset_res.modified_count} posted reels.")
+            except Exception as ue:
+                print(f"   ⚠️ Could not unset binaries: {ue}")
             
-            # Clean GridFS files
-            fs = gridfs.GridFS(db)
-            posted_with_gridfs = list(db.reels.find({
-                'status': 'posted',
-                'gridfs_file_id': {'$exists': True, '$ne': None}
-            }))
+            # 3. Clean GridFS files
+            try:
+                fs = gridfs.GridFS(db)
+                posted_with_gridfs = list(db.reels.find({
+                    'status': 'posted',
+                    'gridfs_file_id': {'$exists': True, '$ne': None}
+                }, {'gridfs_file_id': 1}))
+                
+                for reel in posted_with_gridfs:
+                    try:
+                        gridfs_file_id = reel['gridfs_file_id']
+                        fs.delete(gridfs_file_id)
+                        db.reels.update_one(
+                            {'_id': reel['_id']},
+                            {
+                                '$unset': {'gridfs_file_id': ''},
+                                '$set': {'cleaned_at': datetime.now()}
+                            }
+                        )
+                        cleaned_count += 1
+                    except Exception as ge:
+                        print(f"   ⚠️ Failed to clean GridFS file: {ge}")
+            except Exception as fe:
+                print(f"   ⚠️ GridFS cleanup error: {fe}")
             
-            for reel in posted_with_gridfs:
-                try:
-                    gridfs_file_id = reel['gridfs_file_id']
-                    gridfs_file = fs.get(gridfs_file_id)
-                    size_mb = gridfs_file.length / (1024 * 1024)
-                    space_freed_mb += size_mb
-                    
-                    fs.delete(gridfs_file_id)
-                    db.reels.update_one(
-                        {'_id': reel['_id']},
-                        {
-                            '$unset': {'gridfs_file_id': ''},
-                            '$set': {'cleaned_at': datetime.now()}
-                        }
-                    )
-                    cleaned_count += 1
-                except Exception as e:
-                    print(f"   ⚠️  Failed to clean GridFS file: {e}")
+            # 3. If still over threshold, delete historical posted reels older than 14 days
+            fresh_stats = db.command('dbstats')
+            fresh_data_mb = fresh_stats.get('dataSize', 0) / (1024 * 1024)
+            if (fresh_data_mb / FREE_TIER_LIMIT_MB) >= CLEANUP_THRESHOLD:
+                from datetime import timedelta
+                cutoff = datetime.now() - timedelta(days=14)
+                del_res = db.reels.delete_many({
+                    'status': 'posted',
+                    'created_at': {'$lt': cutoff}
+                })
+                print(f"🗑️ Pruned {del_res.deleted_count} historical posted reels older than 14 days")
             
             print(f"✅ Auto-cleanup complete: {cleaned_count} reels cleaned, ~{space_freed_mb:.2f} MB freed")
-            
-            client.close()
             return True
         
-        client.close()
         return False
         
     except Exception as e:
-        print(f"❌ Auto-cleanup failed: {e}")
+        print(f"❌ Auto-cleanup check failed: {e}")
         return False
+    finally:
+        if client:
+            try:
+                client.close()
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     print("=" * 60)

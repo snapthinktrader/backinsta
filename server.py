@@ -1054,13 +1054,14 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             logger.error(traceback.format_exc())
             return None
     
-    def post_to_instagram_direct(self, image_url: str, caption: str) -> Dict:
+    def post_to_instagram_direct(self, image_url: str, caption: str, cover_url: Optional[str] = None) -> Dict:
         """
         Post directly to Instagram using Graph API
         
         Args:
             image_url: Public URL of the image
             caption: Instagram caption
+            cover_url: Optional public URL of video cover/thumbnail
             
         Returns:
             Result dictionary with success status and details
@@ -1153,6 +1154,9 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                             "caption": caption,
                             "access_token": self.access_token
                         }
+                        if cover_url:
+                            create_params["cover_url"] = cover_url
+                            logger.info(f"🖼️ Setting custom cover_url for Instagram Reel: {cover_url}")
                     else:
                         create_params = {
                             "image_url": final_image_url,
@@ -1576,6 +1580,7 @@ Provide ONLY the analysis, no extra labels or formatting:"""
     def get_pending_reel_from_mongodb(self) -> Optional[Dict]:
         """
         Fetch the oldest pending pre-generated reel from MongoDB (qpost.reels)
+        and atomically mark it as 'processing' to prevent duplicate execution across workers/restarts.
         
         Returns:
             Dict representing the pending reel or None if none available
@@ -1583,13 +1588,26 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         try:
             if self.db is not None and self.db.client is not None:
                 qpost_db = self.db.client.qpost
-                reel = qpost_db.reels.find_one(
+                reel = qpost_db.reels.find_one_and_update(
                     {"status": "pending"},
+                    {
+                        "$set": {
+                            "status": "processing",
+                            "processing_started_at": datetime.utcnow()
+                        }
+                    },
                     sort=[("created_at", 1)]
                 )
-                if reel and reel.get("video_data"):
-                    logger.info(f"🎬 Found pre-generated reel in MongoDB: {reel.get('headline', '')[:50]}")
-                    return reel
+                if reel:
+                    if reel.get("video_data"):
+                        logger.info(f"🎬 Found and locked pre-generated reel in MongoDB: {reel.get('headline', '')[:50]}")
+                        return reel
+                    else:
+                        logger.warning(f"⚠️ Pre-generated reel missing video_data, marking failed: {reel.get('headline', '')[:50]}")
+                        qpost_db.reels.update_one(
+                            {"_id": reel["_id"]},
+                            {"$set": {"status": "failed", "error": "Missing video_data"}}
+                        )
         except Exception as e:
             logger.warning(f"⚠️ Could not check for pending reels in MongoDB: {e}")
         return None
@@ -1636,10 +1654,50 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             youtube_success = False
             facebook_success = False
             
+            # Prepare thumbnail/cover for all platforms
+            thumbnail_data = reel.get('thumbnail_data')
+            thumbnail_path = reel.get('thumbnail_path')
+            cover_url = reel.get('cover_url')
+            
+            temp_thumb_file = None
+            local_thumbnail_path = None
+            
+            # 1. Resolve local thumbnail path for YouTube and Facebook
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                local_thumbnail_path = thumbnail_path
+            elif thumbnail_data:
+                try:
+                    temp_thumb = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                    temp_thumb.write(thumbnail_data)
+                    temp_thumb.close()
+                    temp_thumb_file = temp_thumb.name
+                    local_thumbnail_path = temp_thumb.name
+                    logger.info(f"🖼️ Wrote thumbnail_data to temporary file: {local_thumbnail_path}")
+                except Exception as t_err:
+                    logger.warning(f"⚠️ Could not dump thumbnail_data to temp file: {t_err}")
+
+            # 2. Resolve public cover_url for Instagram
+            if not cover_url:
+                if thumbnail_data:
+                    logger.info("📤 Hosting thumbnail_data for Instagram cover_url...")
+                    cover_url = self.upload_image(thumbnail_data)
+                elif local_thumbnail_path and os.path.exists(local_thumbnail_path):
+                    logger.info(f"📤 Hosting local thumbnail {local_thumbnail_path} for Instagram cover_url...")
+                    try:
+                        with open(local_thumbnail_path, "rb") as tf:
+                            cover_url = self.upload_image(tf.read())
+                    except Exception as tf_err:
+                        logger.warning(f"⚠️ Could not upload local thumbnail to image host: {tf_err}")
+            
+            if cover_url:
+                logger.info(f"✅ Ready cover_url for Instagram: {cover_url}")
+            if local_thumbnail_path:
+                logger.info(f"✅ Ready local thumbnail path for YouTube/Facebook: {local_thumbnail_path}")
+            
             # 1. Instagram Post
             try:
                 logger.info("📤 Posting pre-generated reel to Instagram...")
-                ig_res = self.post_to_instagram_direct(video_url, caption)
+                ig_res = self.post_to_instagram_direct(video_url, caption, cover_url=cover_url)
                 instagram_success = ig_res.get('success', False)
                 if instagram_success:
                     logger.info(f"✅ Instagram Reel posted! ID: {ig_res.get('post_id')}")
@@ -1661,7 +1719,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     yt_res = self.youtube_uploader.create_short_from_article(
                         video_path=video_path,
                         article=article_data,
-                        ai_analysis=ai_analysis
+                        ai_analysis=ai_analysis,
+                        thumbnail_path=local_thumbnail_path
                     )
                     youtube_success = yt_res.get('success', False)
                     if youtube_success:
@@ -1683,7 +1742,8 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     fb_res = self.facebook_uploader.upload_video_from_article(
                         video_path=video_path,
                         article=article_data,
-                        ai_analysis=ai_analysis
+                        ai_analysis=ai_analysis,
+                        thumbnail_path=local_thumbnail_path
                     )
                     facebook_success = fb_res.get('success', False)
                     if facebook_success:
@@ -1691,10 +1751,12 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                 except Exception as fb_err:
                     logger.warning(f"⚠️ Facebook upload exception: {fb_err}")
 
-            # Cleanup temporary file
+            # Cleanup temporary files
             try:
                 if os.path.exists(video_path):
                     os.unlink(video_path)
+                if temp_thumb_file and os.path.exists(temp_thumb_file):
+                    os.unlink(temp_thumb_file)
             except Exception:
                 pass
                 
@@ -1706,13 +1768,19 @@ Provide ONLY the analysis, no extra labels or formatting:"""
                     qpost_db = self.db.client.qpost
                     qpost_db.reels.update_one(
                         {'_id': reel_id},
-                        {'$set': {
-                            'status': 'posted',
-                            'posted_at': datetime.utcnow(),
-                            'instagram_post_id': ig_res.get('post_id') if instagram_success else None,
-                            'youtube_video_id': yt_res.get('video_id') if youtube_success else None,
-                            'fb_post_id': fb_res.get('post_id') if facebook_success else None
-                        }}
+                        {
+                            '$set': {
+                                'status': 'posted',
+                                'posted_at': datetime.utcnow(),
+                                'instagram_post_id': ig_res.get('post_id') if instagram_success else None,
+                                'youtube_video_id': yt_res.get('video_id') if youtube_success else None,
+                                'fb_post_id': fb_res.get('post_id') if facebook_success else None
+                            },
+                            '$unset': {
+                                'video_data': '',
+                                'thumbnail_data': ''
+                            }
+                        }
                     )
                 except Exception as qp_err:
                     logger.warning(f"⚠️ Could not update qpost.reels status: {qp_err}")

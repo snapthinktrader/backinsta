@@ -61,7 +61,7 @@ class FacebookPageUploader:
             logger.error(f"❌ Facebook Page verification exception: {e}")
             return {"success": False, "error": str(e)}
 
-    def upload_video_from_article(self, video_path: str, article: Dict, ai_analysis: Optional[Dict] = None) -> Dict:
+    def upload_video_from_article(self, video_path: str, article: Dict, ai_analysis: Optional[Dict] = None, thumbnail_path: Optional[str] = None) -> Dict:
         """
         Upload a video Reel to the Facebook Page
 
@@ -69,6 +69,7 @@ class FacebookPageUploader:
             video_path: Local file path of the video file (.mp4)
             article: Dictionary containing article metadata (title, abstract, url)
             ai_analysis: Optional dictionary containing AI-generated caption and hashtags
+            thumbnail_path: Optional local file path of custom thumbnail/cover image
 
         Returns:
             Dict: {'success': bool, 'post_id': str, 'video_id': str, 'facebook_url': str}
@@ -124,7 +125,18 @@ class FacebookPageUploader:
                 files = {
                     "source": ("reel.mp4", video_file, "video/mp4")
                 }
-                resp = requests.post(url, data=data, files=files, timeout=120)
+                thumb_file = None
+                if thumbnail_path and os.path.exists(thumbnail_path):
+                    thumb_file = open(thumbnail_path, "rb")
+                    thumb_mime = "image/jpeg" if thumbnail_path.lower().endswith(('.jpg', '.jpeg')) else "image/png"
+                    files["thumb"] = (os.path.basename(thumbnail_path), thumb_file, thumb_mime)
+                    logger.info(f"🖼️ Attaching custom thumbnail to Facebook video: {thumbnail_path}")
+
+                try:
+                    resp = requests.post(url, data=data, files=files, timeout=120)
+                finally:
+                    if thumb_file:
+                        thumb_file.close()
 
             if resp.status_code == 200:
                 resp_json = resp.json()
