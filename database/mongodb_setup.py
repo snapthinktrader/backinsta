@@ -45,10 +45,16 @@ def create_schema():
         # Create indexes for reels collection
         db.reels.create_index('status')
         db.reels.create_index([('created_at', -1)])
-        db.reels.create_index('article_id', unique=True)
+        db.reels.create_index('article_id', unique=True, sparse=True)
         db.reels.create_index('posted_at')
         db.reels.create_index('instagram_post_id')
         db.reels.create_index('youtube_video_id')
+        db.reels.create_index(
+            [('headline', 1)],
+            unique=True,
+            partialFilterExpression={'status': 'posted'},
+            name='unique_posted_headline'
+        )
         
         print("✅ Indexes created successfully!")
         

@@ -6,6 +6,7 @@ Fetches news articles from Webstory backend and posts to Instagram using QPost
 
 import os
 import sys
+import re
 import json
 import time
 import requests
@@ -1577,10 +1578,60 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             logger.error(f"❌ Error in post pipeline: {e}")
             return False
 
+    def is_reel_already_posted(self, headline: str, article_url: Optional[str] = None) -> bool:
+        """
+        Check whether this reel has EVER been posted in qpost.reels OR backinsta.posted_articles.
+        Returns True if a duplicate exists.
+        """
+        if not headline:
+            return False
+
+        try:
+            norm_headline = re.sub(r'[^a-zA-Z0-9]', '', headline.lower().strip())
+            if not norm_headline:
+                return False
+
+            # 1. Check in qpost.reels where status == "posted"
+            if self.db is not None and self.db.client is not None:
+                qpost_db = self.db.client.qpost
+                escaped = re.escape(headline.strip())
+                existing_posted = qpost_db.reels.find_one({
+                    "status": "posted",
+                    "headline": {"$regex": f"^{escaped}$", "$options": "i"}
+                })
+                if existing_posted:
+                    logger.warning(f"🚫 Reel already posted in qpost.reels (ID: {existing_posted.get('_id')}): {headline[:50]}")
+                    return True
+
+                # Normalized scan of posted reels in qpost
+                for doc in qpost_db.reels.find({"status": "posted"}, {"headline": 1}):
+                    h = doc.get("headline", "")
+                    if re.sub(r'[^a-zA-Z0-9]', '', h.lower().strip()) == norm_headline:
+                        logger.warning(f"🚫 Reel normalized headline already posted in qpost.reels: {headline[:50]}")
+                        return True
+
+            # 2. Check in backinsta.posted_articles
+            if self.db is not None and self.db.collection is not None:
+                if self.db.is_already_posted(article_url=article_url, article_title=headline):
+                    logger.warning(f"🚫 Reel already posted in backinsta.posted_articles: {headline[:50]}")
+                    return True
+
+                for doc in self.db.collection.find({}, {"article_title": 1, "title": 1}):
+                    t = doc.get("article_title") or doc.get("title") or ""
+                    if t and re.sub(r'[^a-zA-Z0-9]', '', t.lower().strip()) == norm_headline:
+                        logger.warning(f"🚫 Reel title matches backinsta.posted_articles: {headline[:50]}")
+                        return True
+
+        except Exception as e:
+            logger.warning(f"⚠️ Error checking duplicate reel: {e}")
+
+        return False
+
     def get_pending_reel_from_mongodb(self) -> Optional[Dict]:
         """
         Fetch the oldest pending pre-generated reel from MongoDB (qpost.reels)
         and atomically mark it as 'processing' to prevent duplicate execution across workers/restarts.
+        Automatically verifies against posting history and skips any duplicate reels.
         
         Returns:
             Dict representing the pending reel or None if none available
@@ -1588,26 +1639,48 @@ Provide ONLY the analysis, no extra labels or formatting:"""
         try:
             if self.db is not None and self.db.client is not None:
                 qpost_db = self.db.client.qpost
-                reel = qpost_db.reels.find_one_and_update(
-                    {"status": "pending"},
-                    {
-                        "$set": {
-                            "status": "processing",
-                            "processing_started_at": datetime.utcnow()
-                        }
-                    },
-                    sort=[("created_at", 1)]
-                )
-                if reel:
-                    if reel.get("video_data"):
-                        logger.info(f"🎬 Found and locked pre-generated reel in MongoDB: {reel.get('headline', '')[:50]}")
-                        return reel
-                    else:
-                        logger.warning(f"⚠️ Pre-generated reel missing video_data, marking failed: {reel.get('headline', '')[:50]}")
+                while True:
+                    reel = qpost_db.reels.find_one_and_update(
+                        {"status": "pending"},
+                        {
+                            "$set": {
+                                "status": "processing",
+                                "processing_started_at": datetime.utcnow()
+                            }
+                        },
+                        sort=[("created_at", 1)]
+                    )
+                    if not reel:
+                        return None
+
+                    headline = reel.get('headline', '')
+                    article_url = reel.get('article_url')
+
+                    # Deduplication guard: Check if reel was ever posted before
+                    if self.is_reel_already_posted(headline, article_url):
+                        logger.warning(f"🚫 Reel '{headline[:50]}' was ALREADY posted in history! Marking duplicate_skipped.")
+                        qpost_db.reels.update_one(
+                            {"_id": reel["_id"]},
+                            {
+                                "$set": {
+                                    "status": "duplicate_skipped",
+                                    "skipped_at": datetime.utcnow(),
+                                    "error": "Duplicate of previously posted reel"
+                                }
+                            }
+                        )
+                        continue  # Check the next pending reel in queue
+
+                    if not reel.get("video_data"):
+                        logger.warning(f"⚠️ Pre-generated reel missing video_data, marking failed: {headline[:50]}")
                         qpost_db.reels.update_one(
                             {"_id": reel["_id"]},
                             {"$set": {"status": "failed", "error": "Missing video_data"}}
                         )
+                        continue  # Check the next pending reel in queue
+
+                    logger.info(f"🎬 Found and locked pre-generated reel in MongoDB: {headline[:50]}")
+                    return reel
         except Exception as e:
             logger.warning(f"⚠️ Could not check for pending reels in MongoDB: {e}")
         return None
@@ -1631,6 +1704,19 @@ Provide ONLY the analysis, no extra labels or formatting:"""
             video_data = reel.get('video_data')
             
             logger.info(f"\n🚀 Processing pre-generated reel from MongoDB: {headline[:60]}...")
+            
+            # Secondary deduplication check before uploading to external platforms
+            if self.is_reel_already_posted(headline, article_url):
+                logger.error(f"🚫 Secondary check: Reel '{headline[:50]}' was already posted previously! Aborting post.")
+                try:
+                    qpost_db = self.db.client.qpost
+                    qpost_db.reels.update_one(
+                        {"_id": reel_id},
+                        {"$set": {"status": "duplicate_skipped", "skipped_at": datetime.utcnow()}}
+                    )
+                except Exception:
+                    pass
+                return False
             
             if not video_data:
                 logger.error("❌ Pre-generated reel has no video_data")
